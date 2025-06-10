@@ -1,0 +1,16 @@
+# Requirements for Productivity Tools
+# See README.md for setup instructions.
+
+colorama
+faiss-cpu
+gradio
+langchain
+langchain-community
+numpy
+openai-whisper
+oci
+PyPDF2
+scipy
+sounddevice
+tkinter
+tqdm

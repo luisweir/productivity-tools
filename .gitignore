@@ -1,0 +1,12 @@
+.idea/
+.vscode/
+.codexignore
+.env*
+*.env
+tmp/
+temp/
+ksources.txt
+videos.txt
+faiss_index
+productivity-tools
+__pycache__
