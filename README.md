@@ -68,7 +68,7 @@ Create or update the `oci.env` file in the project root with your OCI Gen AI and
 ## 💡 Utilities
 
 ### 💬 chatweb.py
-**Description:** Launches a Gradio web interface that serves a Retrieval-Augmented Generation (RAG) chatbot powered by OCI Generative AI and a FAISS vector store.
+**Description:** Boost your productivity with a personal Retrieval-Augmented Generation (RAG) chatbot for your local files; launches a Gradio web interface powered by OCI Generative AI and a FAISS vector store.
 **Setup:** Ensure you have built the FAISS index by running `faiss-ingest.py`.
 **Usage:**
 ```bash
@@ -78,14 +78,14 @@ python chatweb.py
 Browse to `http://localhost:8080`.
 
 ### 💬 chatprompt.py
-**Description:** Interactive command-line RAG chatbot with spinner animation and colored output.
+**Description:** Boost your productivity with a personal command-line RAG chatbot that retrieves answers from your local data, featuring spinner animation and colored output.
 **Usage:**
 ```bash
 python chatprompt.py
 ```
 
 ### 🔍 faiss-ingest.py
-**Description:** Splits PDF documents into text chunks, generates embeddings with OCI, and indexes them into a FAISS vector store.
+**Description:** Boost your productivity by creating a searchable vector store from your PDFs; splits documents into text chunks, generates embeddings with OCI, and indexes them into a FAISS vector store.
 **Before Running:** Update the `pdf_dirs` list at the top of the script to point to your PDF directories.
 **Usage:**
 ```bash
@@ -93,21 +93,21 @@ python faiss-ingest.py
 ```
 
 ### 📂 organise_pdfs.py
-**Description:** Scans a folder for PDF files, classifies each using OCI Generative AI, and moves them into categorized subfolders.
+**Description:** Streamline document management by automatically classifying and organizing your PDFs into subfolders using OCI Generative AI.
 **Usage:**
 ```bash
 python organise_pdfs.py -p /path/to/pdf_folder
 ```
 
 ### 🎤 mic-summary.py
-**Description:** Records audio from the microphone, transcribes speech locally using Whisper, and summarizes the transcript with OCI Generative AI.
+**Description:** Improve note-taking productivity by recording microphone audio, transcribing speech locally with Whisper, and summarizing the transcript using OCI Generative AI.
 **Usage:**
 ```bash
 python mic-summary.py --output-base <base_name>
 ```
 
 ### 🎥 video-summary-gen.py
-**Description:** Reads a list of video file paths from `videos.txt`, extracts and transcribes audio via Whisper, and generates summaries using OCI Generative AI. Outputs a summary and full transcript file for each video.
+**Description:** Accelerate video content analysis by transcribing and summarizing videos; reads video paths from `videos.txt`, extracts audio via Whisper, and generates summaries using OCI Generative AI.
 **Usage:**
 ```bash
 python video-summary-gen.py
