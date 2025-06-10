@@ -87,17 +87,22 @@ def transcribe_audio(audio_path: str) -> str:
 
 def summarize_transcript(client, transcript: str) -> str:
     prompt_text = (
-        "You are a summarization assistant. Analyze the following transcript to determine what kind of recording it is "
-        "(e.g., a meeting, lecture, casual conversation, podcast). If it's a meeting, include action items and decisions made. "
-        "Otherwise, summarize appropriately.\n\n"
+        "You are a summarisation assistant. Carefully analyse the following transcript. First, determine the type of recording "
+        "(e.g. meeting, presentation, interview, podcast, lecture, casual conversation). Then extract and summarise the key information "
+        "with high coverage. Do not skip technical details, specific examples, or critical explanations.\n\n"
+        "If the recording is a meeting, clearly identify:\n"
+        "- All key discussion points (group them if needed)\n"
+        "- Actions assigned (with owner, if mentioned)\n"
+        "- Decisions made (with context)\n\n"
+        "For all other types, include:\n"
+        "- Type of Recording\n"
+        "- Main topics covered (grouped logically)\n"
+        "- Key insights and takeaways\n"
+        "- Any actions or suggestions shared\n\n"
+        "When possible, indicate who made each point or contribution (e.g. 'Larry explained that...', 'Sam shared...', 'Elon noted...').\n\n"
+        "Use clear section headers and bullet points. Ensure no critical point or insight is missed.\n\n"
         "Transcript:\n"
         f"{transcript}\n\n"
-        "Provide a summary with clear sections:\n"
-        "- Type of Recording\n"
-        "- Key Discussion Points\n"
-        "- Action Items (if applicable)\n"
-        "- Decisions Made (if applicable)\n\n"
-        "Use bullet points. Keep it clear and structured."
     )
 
     content = TextContent(text=prompt_text)
