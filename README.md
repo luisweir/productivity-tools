@@ -25,8 +25,8 @@ Sample Python utilities demonstrating how to leverage Oracle Cloud Infrastructur
 - Python 3.7 or higher
 - pip or pip3
 - virtualenv (recommended)
-- ffmpeg (macOS: `brew install ffmpeg`; Ubuntu: `sudo apt-get install ffmpeg`)
-- portaudio (macOS: `brew install portaudio`; Ubuntu: `sudo apt-get install portaudio19-dev`)
+- ffmpeg (macOS: `brew install ffmpeg`; Windows (Chocolatey): `choco install ffmpeg`; or download from https://ffmpeg.org/download.html)
+- portaudio (macOS: `brew install portaudio`; Windows: `pip install pipwin && pipwin install pyaudio`)
 - [OCI CLI](https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/cliinstall.htm) configured (~/.oci/config)
 - `oci.env` file with OCI Gen AI and LangChain settings (see [Configuration](#configuration))
 
