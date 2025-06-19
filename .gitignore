@@ -5,6 +5,7 @@
 *.env
 tmp/
 temp/
+out/
 ksources.txt
 videos.txt
 faiss_index
