@@ -8,6 +8,7 @@
 #
 # Usage:
 #   python video-summary-gen.py
+#   # Videos to process should be listed in videos.txt, one video file path per line.
 
 import warnings
 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")

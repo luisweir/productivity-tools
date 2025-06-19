@@ -1,7 +1,18 @@
+#!/usr/bin/env python3
+# chatweb.py - Launch a Gradio web UI for RAG-based chat using OCI Generative AI and FAISS vector store.
+#
+# Prerequisites:
+#   - Python 3.7 or higher
+#   - pip3 install gradio langchain-community faiss-cpu oci
+#   - Ensure FAISS index exists by running `python faiss-ingest.py`
+#   - Ensure OCI CLI config is set up in ~/.oci/config
+#
+# Usage:
+#   python chatweb.py
+
 import gradio as gr
 import os
 import signal
-import sys
 import time
 
 from langchain.chains import RetrievalQA
@@ -84,12 +95,11 @@ def chat_fn_stream(message, chat_history):
         for i, doc in enumerate(sources):
             source = doc.metadata.get("source", "Unknown")
             audience = doc.metadata.get("audience", "unknown")
-            domain = doc.metadata.get("domain", "unknown")
             doc_type = doc.metadata.get("type", "unknown")
             abs_path = os.path.abspath(source)
             file_name = os.path.basename(source)
             file_link = f'<a href="file://{abs_path}" target="_blank">{file_name}</a>'
-            meta = f"{audience} | {domain} | {doc_type}"
+            meta = f"{audience} | {doc_type}"
             source_lines.append(f"[{i+1}] {file_link} — {meta}")
 
         sources_html = (

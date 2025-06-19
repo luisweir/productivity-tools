@@ -1,4 +1,16 @@
-# mic-summary.py - Enhanced: Accepts existing transcript and attempts speaker diarisation.
+# mic-summary.py - Record microphone audio, transcribe with Whisper, and summarize using OCI Generative AI.
+#
+# Prerequisites:
+#   - Python 3.7 or higher
+#   - portaudio (macOS: brew install portaudio; Ubuntu: sudo apt-get install portaudio19-dev)
+#   - pip3 install openai-whisper sounddevice scipy numpy oci
+#   - Ensure OCI CLI config is set up in ~/.oci/config
+#
+# Usage:
+#   python mic-summary.py --output-base <base name for output file name>
+#   python mic-summary.py --use-transcript <path to an existing transcript file>
+#   python mic-summary.py --output-dir <directory path to save output files>
+#   python mic-summary.py --output-base <base name> --use-transcript <path/to/transcript.txt> --output-dir <output_directory>
 
 import warnings
 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")

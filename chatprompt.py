@@ -103,9 +103,8 @@ while True:
         for i, doc in enumerate(response["source_documents"]):
             source = doc.metadata.get("source", "Unknown source")
             audience = doc.metadata.get("audience", "unknown")
-            domain = doc.metadata.get("domain", "unknown")
             doc_type = doc.metadata.get("type", "unknown")
-            print(f"  [{i+1}] {source} — {audience} | {domain} | {doc_type}")
+            print(f"  [{i+1}] {source} — {audience} | {doc_type}")
         print(Style.RESET_ALL)
 
     except Exception as e:

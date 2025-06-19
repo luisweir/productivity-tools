@@ -13,7 +13,7 @@ Sample Python utilities demonstrating how to leverage Oracle Cloud Infrastructur
     - [💬 chatweb.py](#-chatwebpy)
     - [💬 chatprompt.py](#-chatpromptpy)
     - [🔍 faiss-ingest.py](#-faiss-ingestpy)
-    - [📂 organise\_pdfs.py](#-organise_pdfspy)
+    - [📂 classify-docs.py](#-classify-docs.py)
     - [🎤 mic-summary.py](#-mic-summarypy)
     - [🎥 video-summary-oci.py](#-video-summary-ocipy)
   - [🤝 Contributing](#-contributing)
@@ -69,16 +69,23 @@ Create or update the `oci.env` file in the project root with your OCI Gen AI and
 
 ### 💬 chatweb.py
 **Description:** Boost your productivity with a personal Retrieval-Augmented Generation (RAG) chatbot for your local files; launches a Gradio web interface powered by OCI Generative AI and a FAISS vector store.
-**Setup:** Ensure you have built the FAISS index by running `faiss-ingest.py`.
+**Prerequisites:**
+- Python 3.7 or higher
+- pip3 install gradio langchain-community faiss-cpu oci
+- Build FAISS index (`python faiss-ingest.py`)
+- Ensure OCI CLI config is set up in ~/.oci/config
 **Usage:**
 ```bash
 python chatweb.py
 ```
-
 Browse to `http://localhost:8080`.
 
 ### 💬 chatprompt.py
 **Description:** Boost your productivity with a personal command-line RAG chatbot that retrieves answers from your local data, featuring spinner animation and colored output.
+**Prerequisites:**
+- Python 3.7 or higher
+- pip3 install langchain langchain-community tqdm colorama oci faiss-cpu
+- Ensure `config.txt` exists in the same directory with OCI and LangChain settings
 **Usage:**
 ```bash
 python chatprompt.py
@@ -86,33 +93,61 @@ python chatprompt.py
 
 ### 🔍 faiss-ingest.py
 **Description:** Boost your productivity by creating a searchable vector store from your PDFs; splits documents into text chunks, generates embeddings with OCI, and indexes them into a FAISS vector store.
-**Before Running:** Update the `pdf_dirs` list at the top of the script to point to your PDF directories.
+**Prerequisites:**
+- Python 3.7 or higher
+- pip3 install langchain-community oci PyPDF2
+- Ensure OCI CLI config is set up in ~/.oci/config
+- Recommended: run `./classify-docs.py` to classify the PDFs before ingesting
 **Usage:**
 ```bash
-python faiss-ingest.py
+python faiss-ingest.py                       # Load folders from ksources.txt
+python faiss-ingest.py --input ./folder1     # Specify one or more folders or files
+python faiss-ingest.py --input ./doc.pdf     # Specify a single PDF
+python faiss-ingest.py --debug               # Enable verbose logging
+python faiss-ingest.py --input ./dir --debug # Combine input and debug options
+python faiss-ingest.py --input /path/to/pdf_folder [--debug]
 ```
 
-### 📂 organise_pdfs.py
+### 📂 classify-docs.py
 **Description:** Streamline document management by automatically classifying and organizing your PDFs into subfolders using OCI Generative AI.
+**Prerequisites:**
+- Python 3.7 or higher
+- pip3 install langchain-community oci PyPDF2
+- Ensure OCI CLI config is set up in ~/.oci/config
 **Usage:**
 ```bash
-python organise_pdfs.py -p /path/to/pdf_folder
+python classify-docs.py --input /path/to/pdf_folder                    # classify all PDFs in a folder
+python classify-docs.py --input file1.pdf file2.pdf /path/to/folder     # classify multiple PDFs or folders
+python classify-docs.py --debug --input /path/to/pdf_folder             # enable debug logging
 ```
 
 ### 🎤 mic-summary.py
 **Description:** Improve note-taking productivity by recording microphone audio, transcribing speech locally with Whisper, and summarizing the transcript using OCI Generative AI.
+**Prerequisites:**
+- Python 3.7 or higher
+- portaudio (macOS: `brew install portaudio`; Ubuntu: `sudo apt-get install portaudio19-dev`)
+- pip3 install openai-whisper sounddevice scipy numpy oci
+- Ensure OCI CLI config is set up in ~/.oci/config
 **Usage:**
 ```bash
-python mic-summary.py --output-base <base_name>
+python mic-summary.py --output-base <base name for output files>
+python mic-summary.py --use-transcript <path/to/transcript.txt>
+python mic-summary.py --output-dir <directory path>
+python mic-summary.py --output-base <base name> --use-transcript <transcript.txt> --output-dir <directory>
 ```
 
 ### 🎥 video-summary-gen.py
 **Description:** Accelerate video content analysis by transcribing and summarizing videos; reads video paths from `videos.txt`, extracts audio via Whisper, and generates summaries using OCI Generative AI.
+**Prerequisites:**
+- Python 3.7 or higher
+- ffmpeg (macOS: `brew install ffmpeg`; Ubuntu: `sudo apt-get install ffmpeg`)
+- pip3 install openai-whisper oci
+- Ensure OCI CLI config is set up in ~/.oci/config
 **Usage:**
 ```bash
 python video-summary-gen.py
 ```
-_Videos to process should be listed in `videos.txt`, one video file path per line._
+*Videos to process should be listed in `videos.txt`, one video file path per line.*
 
 ## 🤝 Contributing
 
