@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# chatweb.py - Launch a Gradio web UI for RAG-based chat using OCI Generative AI and FAISS vector store.
+# chatweb.py – Privacy-focused personal assistant to talk to local documents (offline use, without storing knowledge in the internet); powered by OCI Generative AI and FAISS
 #
 # Prerequisites:
 #   - Python 3.7 or higher
@@ -7,139 +7,254 @@
 #   - Ensure FAISS index exists by running `python faiss-ingest.py`
 #   - Ensure OCI CLI config is set up in ~/.oci/config
 #
-# Usage:
-#   python chatweb.py
+# Usage:  python chatweb.py [--debug]
+
+from __future__ import annotations
+
+import os
+import re
+import signal
+import sys
+from pathlib import Path
+from typing import List, Tuple
 
 import gradio as gr
-import os
-import signal
-import time
-
-from langchain.chains import RetrievalQA
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import OCIGenAIEmbeddings
-from langchain_community.chat_models.oci_generative_ai import ChatOCIGenAI
 from langchain.prompts import PromptTemplate
+from langchain.schema import HumanMessage
+from langchain_community.chat_models.oci_generative_ai import ChatOCIGenAI
+from langchain_community.embeddings import OCIGenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+
 from LoadProperties import LoadProperties
 
-# Load properties
-properties = LoadProperties()
+DEBUG = "--debug" in sys.argv
 
-# Define theme
-pastel_oasis_theme = gr.themes.Base(
-    primary_hue="lime",
-    secondary_hue="purple",
-    neutral_hue="gray",
-).set(
-    body_background_fill="linear-gradient(135deg, #f0fff0, #f0f8ff, #fff0f5)",
-    chatbot_text_size="17px",
-    input_radius="10px",
-    button_primary_background_fill="#ffacac",
-)
+# ─────────────────────────────────────────────────────────────────────────────
+# Allowed metadata values
+# ─────────────────────────────────────────────────────────────────────────────
+ALLOWED_AUDIENCES: dict[str, str] = {
+    "business": "Executives, sales, strategy, partners, human resources, people, society…",
+    "technical": "Developers, architects, engineers, quality assurance, devops, system design…",
+    "general": "Non‑technical and non‑business content intended for a broad audience…",
+    "internal": "Oracle internal documents. Assume the user is an Oracle employee.",
+}
 
-# Set up LLM
+ALLOWED_TYPES: dict[str, str] = {
+    "insight": "Conceptual, strategic thinking or high‑level concepts",
+    "deepdive": "Detailed content",
+    "research": "Research‑focused publications",
+    "governance": "Allowed Oracle tools, internal systems, corporate guidelines, policies and internal processes",
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OCI clients and FAISS store
+# ─────────────────────────────────────────────────────────────────────────────
+props = LoadProperties()
+
 llm = ChatOCIGenAI(
-    model_id=properties.getModelName(),
-    service_endpoint=properties.getEndpoint(),
-    compartment_id=properties.getCompartment(),
-    model_kwargs={"max_tokens": 800, "temperature": 0.5}
+    model_id=props.getModelName(),
+    service_endpoint=props.getEndpoint(),
+    compartment_id=props.getCompartment(),
+    model_kwargs={"max_tokens": 800, "temperature": 0.2},
 )
 
-# Set up embeddings
-embeddings = OCIGenAIEmbeddings(
-    model_id=properties.getEmbeddingModelName(),
-    service_endpoint=properties.getEndpoint(),
-    compartment_id=properties.getCompartment(),
+embed = OCIGenAIEmbeddings(
+    model_id=props.getEmbeddingModelName(),
+    service_endpoint=props.getEndpoint(),
+    compartment_id=props.getCompartment(),
 )
 
-# Load FAISS index
-db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
-retv = db.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+db = FAISS.load_local("faiss_index", embed, allow_dangerous_deserialization=True)
 
-# Custom prompt
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt used to synthesise the answer
+# ─────────────────────────────────────────────────────────────────────────────
 custom_prompt = PromptTemplate(
     input_variables=["context", "question"],
-    template="""You are a helpful AI assistant. Using the context below, answer the question in a clear, professional, and slightly more elaborate way.
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer:"""
+    template=(
+        "You are a helpful AI assistant. Using the context below, answer the question in a clear, "
+        "professional and slightly more elaborate way with HTML formatting.\n\n"
+        "Context:\n{context}\n\nQuestion:\n{question}\n\nAnswer:"
+    ),
 )
 
-# QA chain
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    retriever=retv,
-    return_source_documents=True,
-    chain_type_kwargs={"prompt": custom_prompt}
-)
+# ─────────────────────────────────────────────────────────────────────────────
+# Classification helper
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Simulated streaming chat function
-def chat_fn_stream(message, chat_history):
-    try:
-        response = qa_chain.invoke(message)
-        answer = response["result"]
+def classify_with_genai(query: str) -> Tuple[str | None, str | None]:
+    audience_expl = "\n".join(f"- {k}: {v}" for k, v in ALLOWED_AUDIENCES.items())
+    type_expl = "\n".join(f"- {k}: {v}" for k, v in ALLOWED_TYPES.items())
 
-        partial = ""
-        for word in answer.split():
-            partial += word + " "
-            time.sleep(0.03)
-            yield chat_history + [{"role": "assistant", "content": partial}]
+    extra_rules = (
+        "Guidelines:\n"
+        "• Choose *internal* only if the question explicitly references Oracle internal docs, processes, or tools.\n"
+        "• Choose *governance* only for policy, compliance, or review‑process queries.\n"
+        "Examples:\n"
+        "  Q: 'What does the Oracle AI policy say about model training data?' → internal_governance\n"
+        "  Q: 'Explain RAG architecture in simple terms.' → general_insight\n"
+        "  Q: 'Show me the Python SDK for OCI Generative AI.' → technical_deepdive\n"
+    )
 
-        sources = response["source_documents"]
-        source_lines = []
-        for i, doc in enumerate(sources):
-            source = doc.metadata.get("source", "Unknown")
-            audience = doc.metadata.get("audience", "unknown")
-            doc_type = doc.metadata.get("type", "unknown")
-            abs_path = os.path.abspath(source)
-            file_name = os.path.basename(source)
-            file_link = f'<a href="file://{abs_path}" target="_blank">{file_name}</a>'
-            meta = f"{audience} | {doc_type}"
-            source_lines.append(f"[{i+1}] {file_link} — {meta}")
+    prompt = (
+        "You are an AI classification assistant. Classify the user question into two labels:\n"
+        "1. Audience\n2. Type\n\n"
+        f"Valid Audience values:\n{audience_expl}\n\n"
+        f"Valid Type values:\n{type_expl}\n\n"
+        f"{extra_rules}\n"
+        "Return only the label in the exact format `audience_type` – no other words.\n\n"
+        f"User question:\n{query}\n\nYour response:"
+    )
 
+    if DEBUG:
+        print("\n[DEBUG] Classification prompt:\n", prompt)
+
+    raw = (
+        llm.invoke([HumanMessage(content=prompt)])
+        .content.strip()
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+
+    if DEBUG:
+        print("[DEBUG] Classification response:", raw)
+
+    pattern = rf"^({'|'.join(ALLOWED_AUDIENCES)})_({'|'.join(ALLOWED_TYPES)})$"
+    m = re.match(pattern, raw)
+    return (m.group(1), m.group(2)) if m else (None, None)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Clarification helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_clarifying_prompt(msg: str) -> str:
+    prompt = (
+        "You're an AI assistant that could not confidently classify the user's intent.\n"
+        "Please ask a concise follow‑up question to clarify both audience and type.\n\n"
+        f"User message:\n{msg}\n"
+    )
+    if DEBUG:
+        print("[DEBUG] Clarifying prompt input:\n", prompt)
+    return llm.invoke([HumanMessage(content=prompt)]).content.strip()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main streaming handler
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _print_doc_list(docs, label: str = "") -> None:
+    if DEBUG:
+        print(f"[DEBUG] {label}doc list ({len(docs)} docs):")
+        for i, d in enumerate(docs):
+            meta = d.metadata or {}
+            print(
+                f"    • {i}: {Path(meta.get('source', 'Unknown')).name} | "
+                f"aud={meta.get('audience')} | type={meta.get('type')}"
+            )
+
+def chat_fn_stream(message: str, history: List[dict]):
+    if DEBUG:
+        print("\n[DEBUG] New user question:", message)
+
+    # Reset
+    if message.lower().strip() == "reset session":
+        yield "Session reset. Ask away!"
+        return
+
+    audience, doc_type = classify_with_genai(message)
+    if not audience or not doc_type:
+        yield generate_clarifying_prompt(message)
+        return
+
+    if DEBUG:
+        print(f"[DEBUG] Classified as {audience}_{doc_type}")
+
+    # Filtered search
+    filter_dict = {"audience": audience, "type": doc_type}
+    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 5, "filter": filter_dict})
+    docs = retriever.invoke(message)
+
+    if docs:
+        _print_doc_list(docs, "Filtered ")
+    else:
+        if DEBUG:
+            print("[DEBUG] No docs found with filter", filter_dict)
+        # Fallback search
+        retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+        docs = retriever.invoke(message)
+        _print_doc_list(docs, "Fallback ")
+
+    context_text = "\n\n".join(d.page_content for d in docs)
+    answer_prompt = custom_prompt.format(context=context_text, question=message)
+
+    partial = ""
+    if hasattr(llm, "stream"):
+        for chunk in llm.stream([HumanMessage(content=answer_prompt)]):
+            partial += chunk.content
+            yield partial.replace("\n", "<br>")
+    else:
+        partial = llm.invoke([HumanMessage(content=answer_prompt)]).content
+        yield partial.replace("\n", "<br>")
+
+    # Build sources list
+    seen, items = set(), []
+    for d in docs:
+        meta = d.metadata or {}
+        src = meta.get("source", "Unknown")
+        if src in seen:
+            continue
+        seen.add(src)
+        fn = Path(src).name
+        link = f'<a href="file://{Path(src).resolve()}" target="_blank">{fn}</a>'
+        items.append(f"<li>{link} ({meta.get('audience', 'unknown')} | {meta.get('type', 'unknown')})</li>")
+
+    if items:
         sources_html = (
-            '<div style="font-size: 12px; color: #555; margin-top: 10px;">'
-            + "<br>".join(source_lines)
-            + "</div>"
+            '<div style="font-size:13px;margin-top:15px;color:#444;">'
+            '<strong>Sources used:</strong><ul>' + "".join(items) + '</ul></div>'
         )
-        final_output = partial + "<br><br>" + sources_html
-        yield chat_history + [{"role": "assistant", "content": final_output}]
-    except Exception as e:
-        yield chat_history + [{"role": "assistant", "content": f"Error: {str(e)}"}]
+        yield partial.replace("\n", "<br>") + sources_html
 
-# Graceful shutdown handler
-def shutdown_handler(sig, frame):
-    print("\n🛑 Gracefully shutting down...")
+# ─────────────────────────────────────────────────────────────────────────────
+# Graceful shutdown
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _shutdown(sig, frame):
+    print("\n🛑 Gracefully shutting down…")
     gr.close_all()
     os.kill(os.getpid(), signal.SIGTERM)
 
-signal.signal(signal.SIGINT, shutdown_handler)
+signal.signal(signal.SIGINT, _shutdown)
 
-# Print startup log
-print("🚀 Starting ChatPrompt AI server...")
+# ─────────────────────────────────────────────────────────────────────────────
+# Gradio theme & launch
+# ─────────────────────────────────────────────────────────────────────────────
+
+theme = (
+    gr.themes.Base(primary_hue="lime", secondary_hue="purple", neutral_hue="gray")
+    .set(body_background_fill="linear-gradient(135deg, #f0fff0, #f0f8ff, #fff0f5)")
+    .set(chatbot_text_size="17px")
+    .set(input_radius="10px")
+    .set(button_primary_background_fill="#ffacac")
+)
+
+print("🚀 Starting ChatPrompt AI server…")
 print("🌐 Access it at: http://localhost:8080")
-print("💡 Ask anything related to AI using your Oracle RAG setup!")
-print("📁 Local file links will open in your default file viewer (if supported).")
-print("🧠 Powered by Oracle Generative AI")
-print("🔚 \033[90mPress Ctrl + C to shut down the server\033[0m\n")
+print("💡 Ask anything related to AI using your Oracle RAG set‑up!")
+print("🤔 Powered by Oracle Generative AI")
+print("🔚 Press Ctrl + C to shut down the server\n")
 
-# Launch the UI
 gr.ChatInterface(
     fn=chat_fn_stream,
     title="ChatPrompt AI",
-    description="Ask anything related to AI. This assistant uses your RAG setup with Oracle Generative AI.",
+    description="Ask anything related to AI. This assistant uses your RAG set‑up with Oracle Generative AI.",
     submit_btn="Ask",
     type="messages",
-    theme=pastel_oasis_theme
+    theme=theme,
 ).launch(
     server_name="localhost",
     server_port=8080,
     pwa=True,
     inbrowser=True,
-    show_error=True
+    show_error=True,
 )

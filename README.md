@@ -13,9 +13,9 @@ Sample Python utilities demonstrating how to leverage Oracle Cloud Infrastructur
     - [💬 chatweb.py](#-chatwebpy)
     - [💬 chatprompt.py](#-chatpromptpy)
     - [🔍 faiss-ingest.py](#-faiss-ingestpy)
-    - [📂 classify-docs.py](#-classify-docs.py)
+    - [📂 classify-docs.py](#-classify-docspy)
     - [🎤 mic-summary.py](#-mic-summarypy)
-    - [🎥 video-summary-oci.py](#-video-summary-ocipy)
+    - [🎥 video-summary-gen.py](#-video-summary-genpy)
   - [🤝 Contributing](#-contributing)
   - [License 📜](#license-)
   - [Disclaimer ⚠️](#disclaimer-️)
@@ -68,7 +68,7 @@ Create or update the `oci.env` file in the project root with your OCI Gen AI and
 ## 💡 Utilities
 
 ### 💬 chatweb.py
-**Description:** Boost your productivity with a personal Retrieval-Augmented Generation (RAG) chatbot for your local files; launches a Gradio web interface powered by OCI Generative AI and a FAISS vector store.
+**Description:** Privacy-focused personal assistant to talk to local documents (offline use, without storing knowledge in the internet); powered by OCI Generative AI and FAISS
 **Prerequisites:**
 - Python 3.7 or higher
 - pip3 install gradio langchain-community faiss-cpu oci
