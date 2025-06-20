@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# chatpion-web.py – Privacy‑focused personal assistant to talk to local documents (offline use, no cloud storage) powered by OCI Generative AI and FAISS
+# chatpion-web.py – Privacy‑focused personal assistant to talk to local documents (offline use, no cloud storage) powered by OCI Generative AI.
 #
 # Prerequisites:
 #   - Python 3.7 or higher
@@ -106,7 +106,8 @@ gr.ChatInterface(
     title="ChatPion",
     description=(
         "A privacy-centred personal assistant that lets you talk with your local documents. "
-        "It runs locally against a FAISS-powered RAG, so document searches never leave your device."
+        "It runs locally against a local RAG, so document searches never leave your device. "
+        "Powered 100% by OCI Gen AI."
     ),
     submit_btn="Talk To Your Data",
     type="messages",
