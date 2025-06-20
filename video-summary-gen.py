@@ -27,10 +27,17 @@ from oci.generative_ai_inference.models import (
     BaseChatRequest,
 )
 from oci.retry import NoneRetryStrategy
-from LoadProperties import LoadProperties
+# dynamic load of configuration loader (load-config.py)
+import importlib.util, os
+spec_cfg = importlib.util.spec_from_file_location(
+    "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
+)
+cfg_mod = importlib.util.module_from_spec(spec_cfg)
+spec_cfg.loader.exec_module(cfg_mod)
+LoadConfig = cfg_mod.LoadConfig
 
 # Load properties
-properties = LoadProperties()
+properties = LoadConfig()
 
 def get_oci_client():
     config = oci.config.from_file('~/.oci/config', properties.getDefaultProfile())

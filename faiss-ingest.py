@@ -23,7 +23,15 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import OCIGenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from LoadProperties import LoadProperties
+import importlib.util, os
+
+# dynamic load of configuration loader (load-config.py)
+spec_cfg = importlib.util.spec_from_file_location(
+    "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
+)
+cfg_mod = importlib.util.module_from_spec(spec_cfg)
+spec_cfg.loader.exec_module(cfg_mod)
+LoadConfig = cfg_mod.LoadConfig
 import argparse
 
 def load_sources(file_path="ksources.txt"):
@@ -32,7 +40,7 @@ def load_sources(file_path="ksources.txt"):
     with open(file_path, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
-properties = LoadProperties()
+properties = LoadConfig()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")

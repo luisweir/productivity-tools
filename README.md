@@ -10,8 +10,8 @@ Sample Python utilities demonstrating how to leverage Oracle Cloud Infrastructur
   - [⚙️ Configuration](#️-configuration)
   - [🛠️ Setup](#️-setup)
   - [💡 Utilities](#-utilities)
-    - [💬 chatweb.py](#-chatwebpy)
-    - [💬 chatprompt.py](#-chatpromptpy)
+    - [💬 chatpion-web.py](#-chatpion-webpy)
+    - [💬 chatpion-cli.py](#-chatpion-clipy)
     - [🔍 faiss-ingest.py](#-faiss-ingestpy)
     - [📂 classify-docs.py](#-classify-docspy)
     - [🎤 mic-summary.py](#-mic-summarypy)
@@ -67,28 +67,29 @@ Create or update the `oci.env` file in the project root with your OCI Gen AI and
 
 ## 💡 Utilities
 
-### 💬 chatweb.py
+### 💬 chatpion-web.py
 **Description:** Privacy-focused personal assistant to talk to local documents (offline use, without storing knowledge in the internet); powered by OCI Generative AI and FAISS
 **Prerequisites:**
 - Python 3.7 or higher
 - pip3 install gradio langchain-community faiss-cpu oci
 - Build FAISS index (`python faiss-ingest.py`)
 - Ensure OCI CLI config is set up in ~/.oci/config
+- Ensure `oci.env` exists in the project root with OCI GenAI and LangChain settings
 **Usage:**
 ```bash
-python chatweb.py
+python chatpion-web.py [--debug]
 ```
 Browse to `http://localhost:8080`.
 
-### 💬 chatprompt.py
-**Description:** Boost your productivity with a personal command-line RAG chatbot that retrieves answers from your local data, featuring spinner animation and colored output.
+### 💬 chatpion-cli.py
+**Description:** Boost your productivity with a personal command-line RAG chatbot that retrieves answers from your local data, featuring spinner animation and colored output. Automatically converts HTML-formatted responses into plain text for terminal display.
 **Prerequisites:**
 - Python 3.7 or higher
-- pip3 install langchain langchain-community tqdm colorama oci faiss-cpu
-- Ensure `config.txt` exists in the same directory with OCI and LangChain settings
+- pip3 install colorama oci faiss-cpu langchain-community langchain
+- Ensure `oci.env` exists in the project root with OCI GenAI and LangChain settings
 **Usage:**
 ```bash
-python chatprompt.py
+python chatpion-cli.py [--debug]
 ```
 
 ### 🔍 faiss-ingest.py

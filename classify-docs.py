@@ -20,7 +20,15 @@ import re
 import warnings
 from pathlib import Path
 from langchain_community.document_loaders import PyPDFLoader
-from LoadProperties import LoadProperties
+import importlib.util, os
+
+# dynamic load of configuration loader (load-config.py)
+spec_cfg = importlib.util.spec_from_file_location(
+    "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
+)
+cfg_mod = importlib.util.module_from_spec(spec_cfg)
+spec_cfg.loader.exec_module(cfg_mod)
+LoadConfig = cfg_mod.LoadConfig
 import oci
 from oci.generative_ai_inference import GenerativeAiInferenceClient
 from oci.generative_ai_inference.models import (
@@ -33,7 +41,7 @@ import glob
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
-properties = LoadProperties()
+properties = LoadConfig()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -41,28 +49,16 @@ parser.add_argument("--input", type=str, nargs='+', help="Path(s) to PDF files o
 args = parser.parse_args()
 DEBUG = args.debug
 
-ALLOWED_AUDIENCES = {
-    "business": (
-        "Executives, sales, strategy, partners, human resources, people, society. "
-        "Also includes business-focused research articles (e.g. HBR, McKinsey) that analyse organisational behaviour, productivity, leadership, or AI's business impact."
-    ),
-    "technical": (
-        "Developers, architects, engineers, quality assurance, devops, system design, technical deep-dives, implementation guides. "
-        "Includes academic research or whitepapers focused on technical concepts, code, algorithms, or models."
-    ),
-    "general": (
-        "Non-technical and non-business content intended for a broad audience. "
-        "Excludes research articles, business insights, or technical material."
-    ),
-    "internal": "Oracle internal documents only."
-}
+## reuse classification metadata from chat-engine.py
+spec_chat = importlib.util.spec_from_file_location(
+    "chat_engine", os.path.join(os.path.dirname(__file__), "chat-engine.py")
+)
+chat_mod = importlib.util.module_from_spec(spec_chat)
+spec_chat.loader.exec_module(chat_mod)
+ChatEngine = chat_mod.ChatEngine
 
-ALLOWED_TYPES = {
-    "insight": "Conceptual, strategic thinking or high level concepts",
-    "deepdive": "Detailed content",
-    "research": "Research-focused publications",
-    "governance": "Oracle policies, corporate guidelines, procedures, and internal processes"
-}
+ALLOWED_AUDIENCES = ChatEngine.ALLOWED_AUDIENCES
+ALLOWED_TYPES = ChatEngine.ALLOWED_TYPES
 
 def normalise(text):
     return text.strip().lower().replace(" ", "_").replace("-", "_")
