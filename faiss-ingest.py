@@ -126,7 +126,7 @@ if __name__ == "__main__":
     print(f"\nPDF files successfully ingested: {pdf_file_count}")
     print(f"Loaded document objects: {len(documents)}")
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=100)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1600, chunk_overlap=300)
     all_documents = text_splitter.split_documents(documents)
     print(f"Total chunks: {len(all_documents)}")
 
