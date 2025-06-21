@@ -16,42 +16,45 @@
 #   python faiss-ingest.py --input /path/to/pdf_folder [--debug]
 
 import os
-import sys
 import contextlib
 from pathlib import Path
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import OCIGenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-import importlib.util, os
+from PyPDF2 import PdfReader
+import importlib.util
+import argparse
 
-# dynamic load of configuration loader (load-config.py)
+# Load dynamic configuration
 spec_cfg = importlib.util.spec_from_file_location(
     "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
 )
 cfg_mod = importlib.util.module_from_spec(spec_cfg)
 spec_cfg.loader.exec_module(cfg_mod)
 LoadConfig = cfg_mod.LoadConfig
-import argparse
 
-def load_sources(file_path="ksources.txt"):
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"'{file_path}' not found. Please create this file with one directory path per line.")
-    with open(file_path, "r") as f:
-        return [line.strip() for line in f if line.strip()]
-
-properties = LoadConfig()
-
+# Argument parser
 parser = argparse.ArgumentParser()
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 parser.add_argument("--input", type=str, nargs="*", help="Paths to folders or files")
 args = parser.parse_args()
 DEBUG = args.debug
 
-input_paths = args.input if args.input else load_sources()
+# Load properties
+properties = LoadConfig()
 
+# Load source paths
+def load_sources(file_path="ksources.txt"):
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"'{file_path}' not found. Please create this file with one directory path per line.")
+    with open(file_path, "r") as f:
+        return [line.strip() for line in f if line.strip()]
+
+input_paths = args.input if args.input else load_sources()
 pdf_file_count = 0
 
+# Utility functions
 def normalise(text):
     return text.strip().lower().replace(" ", "_").replace("-", "_")
 
@@ -63,6 +66,70 @@ def infer_from_folder(file_path):
             return normalise(parts[0]), normalise(parts[1])
     return "unclassified", "unclassified"
 
+# classify documents as "Oracle Owned" when they're Oracle's
+def is_oracle_owned(path: str, DEBUG: bool = False) -> bool:
+    from PyPDF2 import PdfReader
+    import os
+    from pathlib import Path
+
+    content_indicators = [
+        "oracle confidential",
+        "internal use only",
+        "© oracle",
+        "oracle and/or its affiliates",
+        "oracle corporation",
+        "copyright © oracle",
+        "oracle cloud infrastructure",
+        "oracle fusion",
+        "oracle hospitality"
+    ]
+    file_indicators = [
+        "oci", "ohip", "fusion", "myoracle", "opera", "micros",
+        "orcl", "ocs", "cloud_console", "cloud_ops", "internal_tool"
+    ]
+
+    try:
+        # Check the last folder in the path
+        last_folder = Path(path).parent.name.lower()
+        if DEBUG:
+            print(f"[DEBUG] Last folder: {last_folder}")
+        if "internal" in last_folder or "oracle" in last_folder:
+            if DEBUG:
+                print("[DEBUG] Match found in last folder name")
+            return True
+
+        # Check file name
+        filename = os.path.basename(path).lower()
+        if DEBUG:
+            print(f"[DEBUG] Checking file name: {filename}")
+        if any(kw in filename for kw in file_indicators):
+            if DEBUG:
+                print(f"[DEBUG] Match found in file name")
+            return True
+
+        # Check PDF content (first 5 pages)
+        reader = PdfReader(path)
+        text_found = ""
+        for i, page in enumerate(reader.pages[:5]):
+            text = page.extract_text() or ""
+            if DEBUG:
+                print(f"[DEBUG] Page {i+1} text: {repr(text[:200])}")
+            text_found += text.lower()
+
+        if any(ind in text_found for ind in content_indicators):
+            if DEBUG:
+                print("[DEBUG] Match found in PDF content")
+            return True
+
+    except Exception as e:
+        if DEBUG:
+            print(f"[WARN] Failed to process {path}: {e}")
+
+    if DEBUG:
+        print(f"[DEBUG] No Oracle indicators found in file: {path}")
+    return False
+
+# Load documents
 def load_documents_from_folders(paths):
     global pdf_file_count
     documents = []
@@ -81,19 +148,27 @@ def load_documents_from_folders(paths):
                                 with contextlib.redirect_stderr(devnull):
                                     loader = PyPDFLoader(full_path)
                                     docs = loader.load()
+                            oracle_flag = bool(is_oracle_owned(full_path, DEBUG))
                             for doc in docs:
                                 doc.metadata.update({
-                                    "source": full_path,
+                                    "source": full_path or path,
                                     "audience": audience,
-                                    "type": doc_type
+                                    "type": doc_type,
+                                    "oracle_owned": oracle_flag,
+                                    "chunk_count": len(docs)
                                 })
+                                if DEBUG:
+                                    print(f"[DEBUG] Metadata added -> source: {doc.metadata.get('source')}, "
+                                        f"audience: {doc.metadata.get('audience')}, type: {doc.metadata.get('type')}, "
+                                        f"oracle_owned: {doc.metadata.get('oracle_owned')} ({type(doc.metadata.get('oracle_owned'))})")
+                        
                             documents.extend(docs)
                             pdf_file_count += 1
                             if DEBUG:
-                                print(f"Ingested: {full_path} ({audience}, {doc_type})")
+                                print(f"Ingested: {path} ({audience}, {doc_type}, {oracle_flag})")
                         except Exception as e:
                             if DEBUG:
-                                print(f"[WARN] Failed to load {full_path}: {e}")
+                                print(f"[WARN] Failed to load {path}: {e}")
         elif os.path.isfile(path) and path.lower().endswith(".pdf"):
             print(f"Scanning file: {path}")
             if DEBUG:
@@ -104,22 +179,30 @@ def load_documents_from_folders(paths):
                     with contextlib.redirect_stderr(devnull):
                         loader = PyPDFLoader(path)
                         docs = loader.load()
+                oracle_flag = bool(is_oracle_owned(full_path, DEBUG))
                 for doc in docs:
                     doc.metadata.update({
-                        "source": path,
+                        "source": full_path or path,
                         "audience": audience,
-                        "type": doc_type
+                        "type": doc_type,
+                        "oracle_owned": oracle_flag,
+                        "chunk_count": len(docs)
                     })
+                    if DEBUG:
+                        print(f"[DEBUG] Metadata added -> source: {doc.metadata.get('source')}, "
+                            f"audience: {doc.metadata.get('audience')}, type: {doc.metadata.get('type')}, "
+                            f"oracle_owned: {doc.metadata.get('oracle_owned')} ({type(doc.metadata.get('oracle_owned'))})")
+    
                 documents.extend(docs)
                 pdf_file_count += 1
                 if DEBUG:
-                    print(f"Ingested: {path} ({audience}, {doc_type})")
+                    print(f"Ingested: {path} ({audience}, {doc_type}, {oracle_flag})")
             except Exception as e:
                 if DEBUG:
                     print(f"[WARN] Failed to load {path}: {e}")
     return documents
 
-# --- Entry point ---
+# Entry point
 if __name__ == "__main__":
     documents = load_documents_from_folders(input_paths)
 

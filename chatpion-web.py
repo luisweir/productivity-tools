@@ -119,5 +119,5 @@ gr.ChatInterface(
     pwa=True,
     inbrowser=True,
     show_error=True,
-    allowed_paths=[Path("background.png").resolve()],
+    allowed_paths=[Path(__file__).parent.resolve()],
 )

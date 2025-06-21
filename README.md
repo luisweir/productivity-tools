@@ -81,6 +81,8 @@ python chatpion-web.py [--debug]
 ```
 Browse to `http://localhost:8080`.
 
+> **Note:** Source document links at the end of each chat are now served via HTTP from the project directory. Ensure your documents are located under the project root so that the generated relative links (served through Gradio's static paths) work correctly in your browser.
+
 ### 💬 chatpion-cli.py
 **Description:** Boost your productivity with a personal command-line RAG chatbot that retrieves answers from your local data, featuring spinner animation and colored output. Automatically converts HTML-formatted responses into plain text for terminal display.
 **Prerequisites:**
