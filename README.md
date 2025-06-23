@@ -1,6 +1,6 @@
 # 🚀 Productivity Tools
 
-Sample Python utilities demonstrating how to leverage Oracle Cloud Infrastructure (OCI) Generative AI services to boost productivity across common tasks such as chat interfaces, document indexing, classification, and multimedia summarization. ✨
+Sample Python utilities to help you learn how to use Oracle Cloud Infrastructure (OCI) Generative AI services in hands-on ways. These tools demonstrate techniques for building chat interfaces, indexing documents, classifying content, and summarising audio and video — all designed to support individual learning and experimentation. ✨
 
 ## 📑 Table of Contents
 
@@ -154,14 +154,12 @@ python video-summary-gen.py
 
 ## 🤝 Contributing
 
-Contributions and feedback are welcome! Please open issues or pull requests to enhance these utilities.
+Ideas, feedback, and contributions are welcome. Feel free to open an issue or submit a pull request.
 
 ## License 📜
 
-This project is available under the [Universal Permissive License v 1.0](https://oss.oracle.com/licenses/upl).
-
-See [LICENSE](LICENSE.txt) for details.
+This project is licensed under the [Universal Permissive License v 1.0](https://oss.oracle.com/licenses/upl).
 
 ## Disclaimer ⚠️
 
-This is **NOT** an official Oracle product. It is provided for demonstration purposes only, without any guarantees of reliability, accuracy, or completeness. Use it at your own risk.
+These scripts are provided for learning and demonstration purposes only. They are not part of any Oracle product or service, and should not be used for commercial, production, or business activities. Outputs may not be reliable and should not be reused beyond personal experimentation. Use is at your own discretion.
