@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-# chatpion-web.py – Privacy‑focused personal assistant to talk to local documents (offline use, no cloud storage) powered by OCI Generative AI.
+# chatpion_web.py – Privacy‑focused personal assistant to talk to local documents (offline use, no cloud storage) powered by OCI Generative AI.
 #
 # Prerequisites:
 #   - Python 3.7 or higher
 #   - pip3 install gradio langchain-community faiss-cpu oci
-#   - Build FAISS index (`python faiss-ingest.py`)
+#   - Build FAISS index (`python faiss_ingest.py`)
 #   - Ensure the OCI CLI config is available in ~/.oci/config
 #
-# Usage: python chatpion-web.py [--debug]
+# Usage: python chatpion_web.py [--debug]
 
 from __future__ import annotations
 
@@ -18,14 +18,7 @@ from pathlib import Path
 
 import gradio as gr
 
-# dynamic import of shared engine module from dash-named file
-import importlib.util
-spec = importlib.util.spec_from_file_location(
-    "chat_engine", os.path.join(os.path.dirname(__file__), "chat-engine.py")
-)
-chat_engine = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(chat_engine)
-ChatEngine = chat_engine.ChatEngine
+from chat_engine import ChatEngine
 
 DEBUG = "--debug" in sys.argv
 engine = ChatEngine(debug=DEBUG)

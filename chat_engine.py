@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Common chat engine for RAG-enabled OCI Generative AI applications.
-Includes classification, retrieval, and streaming/chat logic shared by chatpion-web.py and chatpion-cli.py.
+Includes classification, retrieval, and streaming/chat logic shared by chatpion_web.py and chatpion_cli.py.
 """
 import re
 import os
@@ -15,15 +15,7 @@ from langchain_community.chat_models.oci_generative_ai import ChatOCIGenAI
 from langchain_community.embeddings import OCIGenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 
-import importlib.util, os
-
-# dynamic load of configuration loader (load-config.py)
-spec_cfg = importlib.util.spec_from_file_location(
-    "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
-)
-cfg_mod = importlib.util.module_from_spec(spec_cfg)
-spec_cfg.loader.exec_module(cfg_mod)
-LoadConfig = cfg_mod.LoadConfig
+from load_config import LoadConfig
 
 
 class ChatEngine:
@@ -97,11 +89,35 @@ class ChatEngine:
         Use LLM to rephrase the user's question to improve retrieval quality.
         """
         prompt = (
-            "You're an AI assistant helping improve search accuracy.\n"
-            "Rephrase or expand the following user question so it's clearer and more likely to retrieve relevant internal Oracle documents.\n"
-            "Avoid changing the meaning, just make it clearer or more formal.\n\n"
-            f"Original Question:\n{question}\n\nImproved Question:"
+            "Situation:\n"
+            "You are a query expansion specialist working on a document retrieval system used by Oracle employees.\n"
+            "User queries may refer to Oracle internal tools, processes, or documentation. Unless clearly about public or general topics, always assume the context is internal to Oracle.\n"
+            "Queries are often too brief or vague to return the most relevant documents.\n\n"
+
+            "Task:\n"
+            "Expand the user's original query by adding relevant clarifications, related terms, synonyms, and domain-specific phrases. "
+            "You must preserve every word from the original query, in the exact order and form. Only additions are allowed—no deletion, substitution, or reordering.\n\n"
+
+            "Objective:\n"
+            "Maximise the relevance and completeness of retrieved documents by capturing the full intent behind the user's query. "
+            "Avoid over-expanding or drifting from the original meaning. Maintain semantic accuracy.\n\n"
+
+            "Knowledge:\n"
+            "- Effective expansions include related terms, Oracle-specific terminology, synonyms, and sub-questions\n"
+            "- Do not remove or alter the original words\n"
+            "- Add only high-signal terms that enhance document retrieval\n"
+            "- Assume the user is looking for Oracle-internal answers unless the topic is clearly public (e.g. Python syntax, external APIs)\n"
+            "- Include clarifying follow-ups if they help expose intent (e.g. approvals, guidelines, access steps)\n\n"
+
+            "Example:\n"
+            "Original prompt: what external AI tools can I use?\n"
+            "Expanded prompt: what external non-Oracle AI tools can I use? which tools are approved? which require approval? where are the Oracle usage guidelines?\n\n"
+
+            "Return only the expanded search prompt. No explanations, comments, or formatting.\n\n"
+            f"Original prompt: {question}\n"
+            "Expanded prompt:"
         )
+        
         if self.debug:
             print(f"[DEBUG] Rephrasing prompt:\n{prompt}")
         return self.llm.invoke([HumanMessage(content=prompt)]).content.strip()
@@ -114,7 +130,7 @@ class ChatEngine:
         type_expl = "\n".join(f"- {k}: {v}" for k, v in self.ALLOWED_TYPES.items())
         extra_rules = (
             "Guidelines:\n"
-            "• Always assume the user is an Oracle employee. Questions may refer to internal Oracle tools, processes, or documentation.\n"
+            "• Always assume the user is an Oracle employee. Questions may refer to Oracle internal tools, processes, or documentation.\n"
             "• Default to *internal* unless the question clearly applies beyond Oracle, with high confidence (e.g. public tech concepts, general knowledge).\n"
             "• Choose *governance* only for policy, compliance, or review-process queries.\n"
             "Examples:\n"
@@ -253,6 +269,7 @@ class ChatEngine:
 
         # Enhance the query before performing search
         enhanced_query = self.rephrase_query(message)
+        # enhanced_query = message
         if self.debug:
             print(f"[DEBUG] Enhanced query:\n{enhanced_query}")
 
@@ -340,7 +357,7 @@ class ChatEngine:
             return "No internal Oracle-authored content is available to reliably answer your question.", []
         if not docs:
             docs = list(
-                self.db.as_retriever(search_type="similarity", search_kwargs={"k": 5}).invoke(enhanced_query)
+                self.db.as_retriever(search_type="similarity", search_kwargs={"k": 10}).invoke(enhanced_query)
             )
 
         history_text = "\n\n".join(f"User: {u}\nAssistant: {a}" for u, a in self.session_history)

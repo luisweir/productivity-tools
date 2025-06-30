@@ -1,4 +1,4 @@
-# mic-summary.py - Record microphone audio, transcribe with Whisper, and summarize using OCI Generative AI.
+# mic_summary.py - Record microphone audio, transcribe with Whisper, and summarize using OCI Generative AI.
 #
 # Prerequisites:
 #   - Python 3.7 or higher
@@ -7,10 +7,10 @@
 #   - Ensure OCI CLI config is set up in ~/.oci/config
 #
 # Usage:
-#   python mic-summary.py --output-base <base name for output file name>
-#   python mic-summary.py --use-transcript <path to an existing transcript file>
-#   python mic-summary.py --output-dir <directory path to save output files>
-#   python mic-summary.py --output-base <base name> --use-transcript <path/to/transcript.txt> --output-dir <output_directory>
+#   python mic_summary.py --output-base <base name for output file name>
+#   python mic_summary.py --use-transcript <path to an existing transcript file>
+#   python mic_summary.py --output-dir <directory path to save output files>
+#   python mic_summary.py --output-base <base name> --use-transcript <path/to/transcript.txt> --output-dir <output_directory>
 
 import warnings
 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")
@@ -32,15 +32,17 @@ from oci.generative_ai_inference.models import (
     OnDemandServingMode, BaseChatRequest
 )
 from oci.retry import NoneRetryStrategy
+import signal
+
+stop_flag = threading.Event()
+
+def handle_interrupt(signum, frame):
+    stop_flag.set()
+
+signal.signal(signal.SIGINT, handle_interrupt)
+
 # dynamic load of configuration loader (load-config.py)
-# dynamic load of configuration loader (load-config.py)
-import importlib.util, os
-spec_cfg = importlib.util.spec_from_file_location(
-    "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
-)
-cfg_mod = importlib.util.module_from_spec(spec_cfg)
-spec_cfg.loader.exec_module(cfg_mod)
-LoadConfig = cfg_mod.LoadConfig
+from load_config import LoadConfig
 
 # Load properties
 properties = LoadConfig()
@@ -62,8 +64,6 @@ def get_oci_client():
 def record_audio():
     print("🎤 Recording... Press Ctrl+C to stop.")
 
-    stop_flag = threading.Event()
-
     def callback(indata, frames_count, time, status):
         frames.append(indata.copy())
 
@@ -74,15 +74,14 @@ def record_audio():
             sys.stdout.flush()
             sd.sleep(300)
 
+    spinner_thread = threading.Thread(target=show_spinner)
+    spinner_thread.start()
+
     try:
-        spinner_thread = threading.Thread(target=show_spinner)
-        spinner_thread.start()
-
         with sd.InputStream(samplerate=fs, channels=channels, callback=callback):
-            while True:
-                sd.sleep(1000)
-
-    except KeyboardInterrupt:
+            while not stop_flag.is_set():
+                sd.sleep(200)  # Short sleep so we can check the stop_flag often
+    finally:
         stop_flag.set()
         spinner_thread.join()
         print("\r🛑 Recording stopped.")

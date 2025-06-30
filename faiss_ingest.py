@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-# faiss-ingest.py - Load PDFs and infer classification from folder structure for embedding and indexing
+# faiss_ingest.py - Load PDFs and infer classification from folder structure for embedding and indexing
 #
 # Prerequisites:
 #   - Python 3.7 or higher
 #   - pip3 install langchain-community oci PyPDF2
 #   - Ensure OCI CLI config is set up in ~/.oci/config
-#   - Recommended: run ./classify-docs.py to classify the PDFs before ingesting.
+#   - Recommended: run ./classify_docs.py to classify the PDFs before ingesting.
 #
 # Usage:
-#   python faiss-ingest.py                       # Load folders from ksources.txt
-#   python faiss-ingest.py --input ./folder1     # Specify one or more folders or files
-#   python faiss-ingest.py --input ./doc.pdf     # Specify a single PDF
-#   python faiss-ingest.py --debug               # Enable verbose logging
-#   python faiss-ingest.py --input ./dir --debug # Combine input and debug options
-#   python faiss-ingest.py --input /path/to/pdf_folder [--debug]
+#   python faiss_ingest.py                       # Load folders from ksources.txt
+#   python faiss_ingest.py --input ./folder1     # Specify one or more folders or files
+#   python faiss_ingest.py --input ./doc.pdf     # Specify a single PDF
+#   python faiss_ingest.py --debug               # Enable verbose logging
+#   python faiss_ingest.py --input ./dir --debug # Combine input and debug options
+#   python faiss_ingest.py --input /path/to/pdf_folder [--debug]
 
 import os
 import contextlib
@@ -23,16 +23,8 @@ from langchain_community.embeddings import OCIGenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from PyPDF2 import PdfReader
-import importlib.util
 import argparse
-
-# Load dynamic configuration
-spec_cfg = importlib.util.spec_from_file_location(
-    "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
-)
-cfg_mod = importlib.util.module_from_spec(spec_cfg)
-spec_cfg.loader.exec_module(cfg_mod)
-LoadConfig = cfg_mod.LoadConfig
+from load_config import LoadConfig
 
 # Argument parser
 parser = argparse.ArgumentParser()

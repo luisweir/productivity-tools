@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# load-config.py - Module to load configuration properties from oci.env for OCI and LangChain scripts.
+# load_config.py - Module to load configuration properties from oci.env for OCI and LangChain scripts.
 #
 # Prerequisites:
 #   - Python 3.7 or higher

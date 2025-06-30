@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# classify-docs.py - Recursively scan PDFs, classify via OCI Generative AI, and organise into subfolders by category.
+# classify_docs.py - Recursively scan PDFs, classify via OCI Generative AI, and organise into subfolders by category.
 #
 # Prerequisites:
 #   - Python 3.7 or higher
@@ -7,12 +7,12 @@
 #   - Ensure OCI CLI config is set up in ~/.oci/config
 #
 # Usage:
-#   python classify-docs.py --input /path/to/pdf_folder                    # classify all PDFs in a folder
-#   python classify-docs.py --input file1.pdf file2.pdf /path/to/folder     # classify multiple PDFs or folders
-#   python classify-docs.py --debug --input /path/to/pdf_folder             # enable debug logging
+#   python classify_docs.py --input /path/to/pdf_folder                    # classify all PDFs in a folder
+#   python classify_docs.py --input file1.pdf file2.pdf /path/to/folder     # classify multiple PDFs or folders
+#   python classify_docs.py --debug --input /path/to/pdf_folder             # enable debug logging
 
 #!/usr/bin/env python3
-# classify-docs.py - Recursively scan PDFs, classify via OCI Generative AI, and organise into subfolders by category.
+# classify_docs.py - Recursively scan PDFs, classify via OCI Generative AI, and organise into subfolders by category.
 
 import os
 import shutil
@@ -20,15 +20,7 @@ import re
 import warnings
 from pathlib import Path
 from langchain_community.document_loaders import PyPDFLoader
-import importlib.util, os
-
-# dynamic load of configuration loader (load-config.py)
-spec_cfg = importlib.util.spec_from_file_location(
-    "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
-)
-cfg_mod = importlib.util.module_from_spec(spec_cfg)
-spec_cfg.loader.exec_module(cfg_mod)
-LoadConfig = cfg_mod.LoadConfig
+from load_config import LoadConfig
 import oci
 from oci.generative_ai_inference import GenerativeAiInferenceClient
 from oci.generative_ai_inference.models import (
@@ -49,13 +41,7 @@ parser.add_argument("--input", type=str, nargs='+', help="Path(s) to PDF files o
 args = parser.parse_args()
 DEBUG = args.debug
 
-## reuse classification metadata from chat-engine.py
-spec_chat = importlib.util.spec_from_file_location(
-    "chat_engine", os.path.join(os.path.dirname(__file__), "chat-engine.py")
-)
-chat_mod = importlib.util.module_from_spec(spec_chat)
-spec_chat.loader.exec_module(chat_mod)
-ChatEngine = chat_mod.ChatEngine
+from chat_engine import ChatEngine
 
 ALLOWED_AUDIENCES = ChatEngine.ALLOWED_AUDIENCES
 ALLOWED_TYPES = ChatEngine.ALLOWED_TYPES

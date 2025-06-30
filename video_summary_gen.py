@@ -1,4 +1,4 @@
-# video-summary-gen.py - Batch video summarizer: read videos listed in videos.txt, transcribe via Whisper, and summarize using OCI Generative AI.
+# video_summary_gen.py - Batch video summarizer: read videos listed in videos.txt, transcribe via Whisper, and summarize using OCI Generative AI.
 #
 # Prerequisites:
 #   - Python 3.7 or higher
@@ -7,7 +7,7 @@
 #   - Ensure OCI CLI config is set up in ~/.oci/config
 #
 # Usage:
-#   python video-summary-gen.py
+#   python video_summary_gen.py
 #   # Videos to process should be listed in videos.txt, one video file path per line.
 
 import warnings
@@ -28,13 +28,7 @@ from oci.generative_ai_inference.models import (
 )
 from oci.retry import NoneRetryStrategy
 # dynamic load of configuration loader (load-config.py)
-import importlib.util, os
-spec_cfg = importlib.util.spec_from_file_location(
-    "load_config", os.path.join(os.path.dirname(__file__), "load-config.py")
-)
-cfg_mod = importlib.util.module_from_spec(spec_cfg)
-spec_cfg.loader.exec_module(cfg_mod)
-LoadConfig = cfg_mod.LoadConfig
+from load_config import LoadConfig
 
 # Load properties
 properties = LoadConfig()
@@ -73,14 +67,31 @@ def transcribe_audio(audio_path: str) -> str:
 
 def summarize_transcript(client, transcript: str) -> str:
     prompt_text = (
-        "Here is the transcript of a meeting call:\n\n"
-        f"{transcript}\n\n"
-        "Summarise the meeting so I can get a clear picture without listening to the recording.\n\n"
-        "Break it down into:\n"
-        "1) Key discussion points: Focus on the main topics covered. Highlight any issues raised or heated debate.\n"
-        "2) Action items: List tasks or follow-ups, who is responsible (if known), and any open points.\n"
-        "3) Decisions made: Clearly state what was agreed upon.\n\n"
-        "Use bullet points for each section. Keep it concise and formal. If speaker attribution is possible, include it."
+        "You are a summarisation assistant. Carefully analyse the following transcript. First, determine the type of recording "
+        "(e.g. meeting, presentation, interview, podcast, lecture, casual conversation). Then extract and summarise the key information "
+        "with high coverage. Do not skip technical details, specific examples, or critical explanations.\n\n"
+
+        "If the recording is a meeting, clearly identify:\n"
+        "- All key discussion points (group them if needed)\n"
+        "- Actions assigned (with owner, if mentioned). Highlight time-sensitive or high-priority items\n"
+        "- Decisions made (with context)\n\n"
+
+        "For all other types, include:\n"
+        "- Type of Recording\n"
+        "- Main topics covered (grouped logically)\n"
+        "- Key insights and takeaways\n"
+        "- Any actions or suggestions shared\n\n"
+
+        "In all cases:\n"
+        "- Summarise the overall sentiment or tone of the call (e.g. collaborative, tense, enthusiastic, confused). Note any shifts in mood\n"
+        "- Attribute points to speakers wherever identity is clear or implied. Avoid generic phrasing like 'someone said' if attribution can be inferred\n"
+        "- Note if any parts of the transcript are unclear, noisy, or incomplete\n\n"
+
+        "Use clear section headers and bullet points. Ensure no critical point, insight, or decision is missed.\n\n"
+        "Structure the summary as follows: 1) Type of Recording, 2) Sentiment, 3) Key Topics, 4) Actions & Owners, 5) Decisions, 6) Notable Quotes or Examples.\n\n"
+
+        "Transcript:\n"
+        f"{transcript.strip()}\n\n"
     )
 
     content = TextContent(text=prompt_text)

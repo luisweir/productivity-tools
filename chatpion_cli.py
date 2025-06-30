@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# chatpion-cli.py - CLI RAG-enabled OCI Generative AI chatbot with spinner and colored output.
+# chatpion_cli.py - CLI RAG-enabled OCI Generative AI chatbot with spinner and colored output.
 #
 # Prerequisites:
 #   - Python 3.7 or higher
@@ -7,7 +7,7 @@
 #   - Ensure oci.env exists in the same directory with OCI settings
 #
 # Usage:
-#   python chatpion-cli.py [--debug]
+#   python chatpion_cli.py [--debug]
 
 import sys
 import threading
@@ -18,14 +18,7 @@ import re
 import html
 import os
 
-# dynamic import of shared engine module from dash-named file
-import importlib.util
-spec = importlib.util.spec_from_file_location(
-    "chat_engine", os.path.join(os.path.dirname(__file__), "chat-engine.py")
-)
-chat_engine = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(chat_engine)
-ChatEngine = chat_engine.ChatEngine
+from chat_engine import ChatEngine
 
 from colorama import init, Fore, Style
 
