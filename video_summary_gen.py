@@ -7,8 +7,8 @@
 #   - Ensure OCI CLI config is set up in ~/.oci/config
 #
 # Usage:
-#   python video_summary_gen.py
-#   # Videos to process should be listed in videos.txt, one video file path per line.
+#   python video_summary_gen.py [--output-base BASE] [--output-dir DIR] [--videos-file VIDEOS_FILE]
+#   # Videos to process should be listed in the videos file (default videos.txt), one video file path per line.
 
 import warnings
 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")
@@ -29,6 +29,7 @@ from oci.generative_ai_inference.models import (
 from oci.retry import NoneRetryStrategy
 # dynamic load of configuration loader (load-config.py)
 from load_config import LoadConfig
+import argparse
 
 # Load properties
 properties = LoadConfig()
@@ -71,12 +72,17 @@ def summarize_transcript(client, transcript: str) -> str:
         "(e.g. meeting, presentation, interview, podcast, lecture, casual conversation). Then extract and summarise the key information "
         "with high coverage. Do not skip technical details, specific examples, or critical explanations.\n\n"
 
+        "Before anything else, identify the **participants in the call**. Do this by analysing who is actively speaking in the transcript. "
+        "Ignore any individuals who are only mentioned or referenced by others but do not speak directly. "
+        "List the names (or identifiers) of all speakers who contribute verbally to the conversation.\n\n"
+
         "If the recording is a meeting, clearly identify:\n"
         "- All key discussion points (group them if needed)\n"
         "- Actions assigned (with owner, if mentioned). Highlight time-sensitive or high-priority items\n"
         "- Decisions made (with context)\n\n"
 
         "For all other types, include:\n"
+        "- Participants\n"
         "- Type of Recording\n"
         "- Main topics covered (grouped logically)\n"
         "- Key insights and takeaways\n"
@@ -88,7 +94,7 @@ def summarize_transcript(client, transcript: str) -> str:
         "- Note if any parts of the transcript are unclear, noisy, or incomplete\n\n"
 
         "Use clear section headers and bullet points. Ensure no critical point, insight, or decision is missed.\n\n"
-        "Structure the summary as follows: 1) Type of Recording, 2) Sentiment, 3) Key Topics, 4) Actions & Owners, 5) Decisions, 6) Notable Quotes or Examples.\n\n"
+        "Structure the summary as follows: 1) Participants, 2) Type of Recording, 3) Sentiment, 4) Key Topics, 5) Actions & Owners, 6) Decisions, 7) Notable Quotes or Examples.\n\n"
 
         "Transcript:\n"
         f"{transcript.strip()}\n\n"
@@ -135,18 +141,38 @@ def run_summary(video_path: str, output_path: str):
         write_output_file(transcript_path, transcript, "Full transcript")
         return summary, transcript_path
 
-# Batch processing for videos listed in videos.txt
+# Batch processing for videos listed in a file (default videos.txt)
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Batch video summarizer: read videos listed in a file, transcribe via Whisper, and summarize using OCI Generative AI."
+    )
+    parser.add_argument(
+        "--output-base", type=str, default=None,
+        help="Base name for output files (default: use video filename)"
+    )
+    parser.add_argument(
+        "--output-dir", type=str, default=".",
+        help="Directory to save output files"
+    )
+    parser.add_argument(
+        "--videos-file", type=str, default="videos.txt",
+        help="Path to file listing video paths"
+    )
+    args = parser.parse_args()
+
     try:
-        with open("videos.txt", "r") as f:
+        with open(args.videos_file, "r") as f:
             videos = [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
-        print("videos.txt not found. Please create a file 'videos.txt' with one video path per line.")
+        print(f"{args.videos_file} not found. Please create it with one video path per line.")
         exit(1)
 
+    os.makedirs(args.output_dir, exist_ok=True)
+
     for video_path in videos:
-        base = os.path.splitext(os.path.basename(video_path))[0]
-        output_file = f"{base}-summary.txt"
+        default_base = os.path.splitext(os.path.basename(video_path))[0]
+        base = args.output_base if args.output_base else default_base
+        output_file = os.path.join(args.output_dir, f"{base}-summary.txt")
         print(f"Processing {video_path} -> {output_file}")
         try:
             summary, transcript_path = run_summary(video_path, output_file)
@@ -154,6 +180,3 @@ if __name__ == "__main__":
             print(f"Transcript saved to {transcript_path}")
         except Exception as e:
             print(f"Error processing {video_path}: {e}")
-
-
-

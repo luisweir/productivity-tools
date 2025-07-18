@@ -107,12 +107,17 @@ def summarize_transcript(client, transcript: str) -> str:
         "(e.g. meeting, presentation, interview, podcast, lecture, casual conversation). Then extract and summarise the key information "
         "with high coverage. Do not skip technical details, specific examples, or critical explanations.\n\n"
 
+        "Before anything else, identify the **participants in the call**. Do this by analysing who is actively speaking in the transcript. "
+        "Ignore any individuals who are only mentioned or referenced by others but do not speak directly. "
+        "List the names (or identifiers) of all speakers who contribute verbally to the conversation.\n\n"
+
         "If the recording is a meeting, clearly identify:\n"
         "- All key discussion points (group them if needed)\n"
         "- Actions assigned (with owner, if mentioned). Highlight time-sensitive or high-priority items\n"
         "- Decisions made (with context)\n\n"
 
         "For all other types, include:\n"
+        "- Participants\n"
         "- Type of Recording\n"
         "- Main topics covered (grouped logically)\n"
         "- Key insights and takeaways\n"
@@ -124,7 +129,7 @@ def summarize_transcript(client, transcript: str) -> str:
         "- Note if any parts of the transcript are unclear, noisy, or incomplete\n\n"
 
         "Use clear section headers and bullet points. Ensure no critical point, insight, or decision is missed.\n\n"
-        "Structure the summary as follows: 1) Type of Recording, 2) Sentiment, 3) Key Topics, 4) Actions & Owners, 5) Decisions, 6) Notable Quotes or Examples.\n\n"
+        "Structure the summary as follows: 1) Participants, 2) Type of Recording, 3) Sentiment, 4) Key Topics, 5) Actions & Owners, 6) Decisions, 7) Notable Quotes or Examples.\n\n"
 
         "Transcript:\n"
         f"{transcript.strip()}\n\n"
