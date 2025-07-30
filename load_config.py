@@ -20,6 +20,8 @@ class LoadConfig:
         self.model_name = js.get("model_name")
         self.model_ocid = js.get("model_ocid")
         self.endpoint = js.get("endpoint")
+        self.agent_endpoint_ocid = js.get("agent_endpoint_ocid")
+        self.agent_region = js.get("agent_region")
         self.compartment_ocid = js.get("compartment_ocid")
         self.embedding_model_name = js.get("embedding_model_name")
         self.langchain_key = js.get("langchain_key")
@@ -36,6 +38,12 @@ class LoadConfig:
 
     def getEndpoint(self):
         return self.endpoint
+
+    def getAgentEndpointOcid(self):
+        return self.agent_endpoint_ocid
+
+    def getAgentRegion(self):
+        return self.agent_region
 
     def getCompartment(self):
         return self.compartment_ocid

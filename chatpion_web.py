@@ -15,9 +15,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-
 import gradio as gr
-
 from chat_engine import ChatEngine
 
 DEBUG = "--debug" in sys.argv
