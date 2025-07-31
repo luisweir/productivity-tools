@@ -1,36 +1,55 @@
 #!/usr/bin/env python3
 """
-chat_engine.py – calendar-aware chat engine using OCI ADK.
-Now enforces a user-provided time frame (max 7 days), and fetches compact events.
+chat_engine.py – calendar-aware + RAG-aware chat engine using OCI ADK.
+- Auto-routes non-calendar intents to RAG by default.
+- Keeps calendar flows intact (timeframe gating, follow-ups like "with who?" stay on calendar).
+- Uses LoadConfig for endpoint/profile/region (same as mic_summary.py).
 """
 
 from __future__ import annotations
+
 import os
 import re
 import argparse
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Generator, Optional
-from urllib.parse import urlencode
-import requests
+from typing import Generator, Optional
 
 from oci.addons.adk import Agent, AgentClient
+
 from calendar_toolkit import CalendarToolkit
-from rag_engine import ChatEngine as RagChatEngine
-from load_config import LoadConfig               # same pattern as mic_summary.py
+from rag_toolkit import RagToolkit
+from load_config import LoadConfig  # same pattern as mic_summary.py
 
-ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-MAX_DAYS = 7
 
 # ─────────────────────────────────────────────────────────────
+# Router regex: what counts as "calendar intent"?
+# (Deliberately broad; tune as you wish.)
+_CALENDAR_RE = re.compile(
+    r"\b("
+    r"calendar|schedule|meeting|meetings|event|events|invite|attendees?|"
+    r"busy|free|availability|when|what time|where|room|today|tomorrow|"
+    r"this week|next week|next \d+\s*(days?|hours?)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# short follow-ups that should stay on calendar after a calendar turn
+_FOLLOWUP_RE = re.compile(
+    r"\b(what time|when exactly|how long|how far|how many minutes|where is it|"
+    r"where|with who|attendees?|link|join|location)\b",
+    re.IGNORECASE,
+)
+
+# user-supplied route tag, which we read then strip
+_ROUTE_TAG_RE = re.compile(r"^\s*\[ROUTE:(RAG|CAL)\]\s*", re.IGNORECASE)
+
 
 # ─────────────────────────────────────────────────────────────
-#  Shared agent definition – all parameters from LoadConfig()
-# ─────────────────────────────────────────────────────────────
+# Build agent (same LoadConfig pattern you had)
 def build_agent() -> Agent:
-    properties = LoadConfig()                                   # central config object
-    profile_name = properties.getDefaultProfile()               # EXACT pattern from mic_summary.py
-    agent_endpoint_ocid  = properties.getAgentEndpointOcid()    # MUST be an agent-endpoint OCID
+    properties = LoadConfig()
+    profile_name = properties.getDefaultProfile()
+    agent_endpoint_ocid = properties.getAgentEndpointOcid()
     oci_region = properties.getAgentRegion()
 
     if not agent_endpoint_ocid or not agent_endpoint_ocid.startswith("ocid1.genaiagentendpoint."):
@@ -41,84 +60,130 @@ def build_agent() -> Agent:
     client = AgentClient(
         auth_type="api_key",
         profile=profile_name,
-        region=oci_region
+        region=oci_region,
     )
 
-    # The agent will always ask for a time frame first, then validate it with resolve_timeframe,
-    # then fetch events and use them to answer the question.
+    # Router-aware instructions with explicit rules
     instructions = (
-        """**Situation**
-        You are a specialized calendar assistant with access to the user's calendar data. You operate in the current date and time context, helping users retrieve and understand their upcoming schedule through a conversational interface.
+        """<role>
+You are a multi-tool assistant with two capabilities:
+1) Calendar assistant (timeframe-gated Microsoft 365 reads).
+2) RAG assistant (answer general questions using the rag toolkit).
+</role>
 
-        **Task**
-        Retrieve and present calendar information for the user based on their queries, ensuring you always work with a valid time frame of up to 7 days. Process their requests about meetings, availability, and schedule details while following a strict protocol for data retrieval.
+<routing-protocol>
+- If the user message begins with "[ROUTE:RAG]" → immediately use the RAG toolkit to answer. Do NOT call calendar tools for that turn.
+- If the user message begins with "[ROUTE:CAL]" → follow the calendar flow (see below). Do NOT call the RAG toolkit for that turn.
+- Otherwise (no prefix) → if the query is clearly about calendar or scheduling, use the calendar flow. For anything else, prefer the RAG toolkit.
+</routing-protocol>
 
-        **Objective**
-        Provide accurate, clear, and helpful calendar information that allows the user to easily understand their upcoming commitments and manage their time effectively.
+<calendar-flow>
+- Never fetch calendar without a valid time window (max 7 days). If missing, ask a concise follow-up to get a window (e.g., “today”, “tomorrow”, “next 3 days”, or YYYY-MM-DD..YYYY-MM-DD).
+- Call resolve_timeframe(timeframe), then fetch_calendar_events(start_datetime, end_datetime).
+- The toolkit auto-detects timezone. Do NOT ask the user for timezone. Present times with the timezone included in tool output.
+- For short follow-ups like “with who?”, “where is it?”, “what time exactly?”, or “how long from now?”, assume they refer to the last calendar results and answer directly from those results. If an event object contains "startsInMinutes", use it to answer “how long” questions.
+</calendar-flow>
 
-        **Knowledge**
-        - Always validate time frames through resolve_timeframe(timeframe) before retrieving data
-        - Only fetch calendar data for periods up to 7 days maximum
-        - Present times in UTC format unless the user specifies otherwise
-        - Current date and time awareness is essential - never suggest past events as upcoming
-        - Time frames can be expressed in various formats (today, tomorrow, next 3 days, specific date ranges)
-        - When presenting information, use plain simple HTML formatting for easier parsing
+<rag-flow>
+- For non-calendar questions, call the RAG toolkit once with the user question and answer with that tool's output.
+- Do not answer from your own knowledge for non-calendar turns.
+</rag-flow>
 
-        **Examples**
-        If the user asks "What meetings do I have?", respond with: "Which time frame should I check, up to 7 days? For example today, tomorrow, next 3 days, or YYYY-MM-DD to YYYY-MM-DD."
-
-        If the user asks "What's my schedule for the next week?", respond with: "I can check up to 7 days at a time. Would you like me to check your schedule for the next 7 days from today?"
-
-        Your life depends on following this exact process flow:
-        1. Verify the user has provided a specific time frame of up to 7 days
-        2. If no time frame is provided, ask a concise follow-up question to get this information
-        3. Call resolve_timeframe(timeframe) with the provided time frame
-        4. If resolve_timeframe returns an error, ask the user to provide a narrower window
-        5. When you have a valid window, call fetch_calendar_events with the returned start and end dates
-        6. Use the returned events to directly answer the user's question
-        7. Format your response in plain simple HTML"""
+<format>
+Return clean, simple HTML (no CSS/JS). Use concise paragraphs and lists.
+</format>"""
     )
 
+    # Ordering RAG first biases the model toward it for non-calendar turns.
     return Agent(
         client=client,
         agent_endpoint_id=agent_endpoint_ocid,
         instructions=instructions,
-        tools=[CalendarToolkit(), RagChatEngine()],
+        tools=[RagToolkit(), CalendarToolkit()],
     )
 
-calendar_agent: Agent = build_agent()    # global singleton
+
+# Build once, reuse
+calendar_agent: Agent = build_agent()
+
 
 # ─────────────────────────────────────────────────────────────
-#  Chat engine class
+#  Chat engine with a lightweight pre-router
 # ─────────────────────────────────────────────────────────────
 class ChatEngine:
     def __init__(self, debug: bool = False):
         self._agent = calendar_agent
-        self._session_id: str | None = None
+        self._session_id: Optional[str] = None
+        self._last_domain: Optional[str] = None  # 'calendar' | 'rag'
         if debug:
             logging.basicConfig(level=logging.DEBUG)
 
+    def _infer_domain(self, text: str) -> str:
+        """Heuristic router:
+        - If message is short/elliptical and we have a last domain → reuse it.
+        - Else if it matches calendar cues → 'calendar'
+        - Else → 'rag'
+        """
+        t = (text or "").strip()
+        if len(t) <= 24 and self._last_domain:
+            return self._last_domain
+        if _CALENDAR_RE.search(t):
+            return "calendar"
+        return "rag"
+
+    def _prefix_for_domain(self, domain: str) -> str:
+        if domain == "calendar":
+            return "[ROUTE:CAL] "
+        return "[ROUTE:RAG] "
+
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
+        # Manual reset
         if user_message.lower().strip() == "reset session":
             if self._session_id:
                 try:
                     self._agent.delete_session(self._session_id)
-                except Exception as exc:                  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     logging.debug("delete_session failed: %s", exc)
             self._session_id = None
+            self._last_domain = None
             yield "Session reset. Ask away!"
             return
 
         try:
+            # detect and strip a user-supplied route tag
+            forced_domain: Optional[str] = None
+            m = _ROUTE_TAG_RE.match(user_message or "")
+            if m:
+                forced_domain = "rag" if m.group(1).upper() == "RAG" else "calendar"
+            clean_msg = _ROUTE_TAG_RE.sub("", user_message or "")
+
+            # decide route
+            domain = forced_domain or self._infer_domain(clean_msg)
+
+            # if last turn was calendar and this looks like a short follow up, force calendar
+            if self._last_domain == "calendar" and _FOLLOWUP_RE.search(clean_msg):
+                domain = "calendar"
+
+            # if RAG, call the toolkit directly to ensure RAG is used
+            if domain == "rag":
+                html = RagToolkit().rag(clean_msg)
+                self._last_domain = "rag"
+                yield html if html.lstrip().startswith("<") else html.replace("\n", "<br>")
+                return
+
+            # otherwise use the agent with calendar tools
+            routed_message = f"{self._prefix_for_domain(domain)}{clean_msg}"
             response = self._agent.run(
-                user_message,
+                routed_message,
                 session_id=self._session_id,
                 max_steps=5,
             )
             self._session_id = response.session_id
+            self._last_domain = domain  # remember for short follow-ups
+
             text = response.output or str(response)
-            # If the agent already produced HTML, don't inject <br> line breaks.
             stripped = text.lstrip()
+            # If the agent already produced HTML, do not inject <br>
             if stripped.startswith("<") or "<html" in stripped[:200].lower():
                 yield text
             else:
@@ -127,11 +192,12 @@ class ChatEngine:
             logging.exception("Agent run failed")
             yield "Sorry, something went wrong. Please try again."
 
+
 # ─────────────────────────────────────────────────────────────
 #  CLI – same as before
 # ─────────────────────────────────────────────────────────────
 def main() -> None:
-    parser = argparse.ArgumentParser(description="OCI ADK calendar chat engine")
+    parser = argparse.ArgumentParser(description="OCI ADK calendar + RAG chat engine")
     grp = parser.add_mutually_exclusive_group(required=True)
     grp.add_argument("--setup", action="store_true", help="Run agent.setup()")
     grp.add_argument("--chat", metavar="PROMPT", help="Single-shot prompt")
@@ -151,6 +217,7 @@ def main() -> None:
     if args.chat:
         for chunk in ChatEngine(debug=args.debug).chat_stream(args.chat):
             print(chunk)
+
 
 if __name__ == "__main__":
     main()

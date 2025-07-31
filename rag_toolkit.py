@@ -4,7 +4,6 @@ Common chat engine for RAG-enabled OCI Generative AI applications.
 Includes classification, retrieval, and streaming/chat logic shared by chatpion_web.py and chatpion_cli.py.
 """
 import re
-import os
 from collections import OrderedDict
 from pathlib import Path
 from typing import List, Tuple
@@ -17,6 +16,8 @@ from langchain_community.vectorstores import FAISS
 
 from load_config import LoadConfig
 
+from oci.addons.adk import Toolkit, tool
+
 
 class ChatEngine:
     """
@@ -27,14 +28,14 @@ class ChatEngine:
     ALLOWED_AUDIENCES = {
         "business": "Executives, sales, strategy, partners, human resources, people, society…",
         "technical": "Developers, architects, engineers, quality assurance, devops, system design…",
-        "general": "Non‑technical and non‑business content intended for a broad audience…",
+        "general": "Non-technical and non-business content intended for a broad audience…",
         "internal": "Oracle internal documents. Assume the user is an Oracle employee.",
     }
 
     ALLOWED_TYPES = {
-        "insight": "Conceptual, strategic thinking or high‑level concepts",
+        "insight": "Conceptual, strategic thinking or high-level concepts",
         "deepdive": "Detailed content, excluding internal procedures or standards.",
-        "research": "Research‑focused publications",
+        "research": "Research-focused publications",
         "governance": "Internal tools, corporate guidelines, policies and processes",
     }
 
@@ -46,15 +47,15 @@ class ChatEngine:
             model_id=props.getModelName(),
             service_endpoint=props.getEndpoint(),
             compartment_id=props.getCompartment(),
-            model_kwargs = {
-                "max_tokens": 800,               # LLaMA 3 handles long outputs well. 800 gives more room.
-                "temperature": 0.2,              # Lower = more deterministic. Ideal for factual answers.
-                "top_p": 0.9,                    # Keeps diversity without harming coherence.
-                "top_k": 40,                     # Helps filter low-probability noise, but optional.
-                "frequency_penalty": 0.1,        # Light penalty to avoid repeated phrases.
-                "presence_penalty": 0.0,         # Neutral. Don't push novelty.
-                "num_generations": 1,           # Only one needed for assistant behaviour.
-            }
+            model_kwargs={
+                "max_tokens": 800,
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "top_k": 40,
+                "frequency_penalty": 0.1,
+                "presence_penalty": 0.0,
+                "num_generations": 1,
+            },
         )
         self.embed = OCIGenAIEmbeddings(
             model_id=props.getEmbeddingModelName(),
@@ -66,7 +67,8 @@ class ChatEngine:
         if self.debug:
             print(f"[DEBUG] FAISS index contains {len(self.db.docstore._dict)} docs")
             count = sum(
-                1 for d in self.db.docstore._dict.values()
+                1
+                for d in self.db.docstore._dict.values()
                 if d.metadata.get("audience") == "internal"
                 and d.metadata.get("type") == "governance"
                 and d.metadata.get("oracle_owned") is True
@@ -93,31 +95,26 @@ class ChatEngine:
             "You are a query expansion specialist working on a document retrieval system used by Oracle employees.\n"
             "User queries may refer to Oracle internal tools, processes, or documentation. Unless clearly about public or general topics, always assume the context is internal to Oracle.\n"
             "Queries are often too brief or vague to return the most relevant documents.\n\n"
-
             "Task:\n"
             "Expand the user's original query by adding relevant clarifications, related terms, synonyms, and domain-specific phrases. "
-            "You must preserve every word from the original query, in the exact order and form. Only additions are allowed—no deletion, substitution, or reordering.\n\n"
-
+            "You must preserve every word from the original query, in the exact order and form. Only additions are allowed, no deletion, substitution, or reordering.\n\n"
             "Objective:\n"
             "Maximise the relevance and completeness of retrieved documents by capturing the full intent behind the user's query. "
             "Avoid over-expanding or drifting from the original meaning. Maintain semantic accuracy.\n\n"
-
             "Knowledge:\n"
             "- Effective expansions include related terms, Oracle-specific terminology, synonyms, and sub-questions\n"
             "- Do not remove or alter the original words\n"
             "- Add only high-signal terms that enhance document retrieval\n"
             "- Assume the user is looking for Oracle-internal answers unless the topic is clearly public (e.g. Python syntax, external APIs)\n"
             "- Include clarifying follow-ups if they help expose intent (e.g. approvals, guidelines, access steps)\n\n"
-
             "Example:\n"
             "Original prompt: what external AI tools can I use?\n"
             "Expanded prompt: what external non-Oracle AI tools can I use? which tools are approved? which require approval? where are the Oracle usage guidelines?\n\n"
-
             "Return only the expanded search prompt. No explanations, comments, or formatting.\n\n"
             f"Original prompt: {question}\n"
             "Expanded prompt:"
         )
-        
+
         if self.debug:
             print(f"[DEBUG] Rephrasing prompt:\n{prompt}")
         return self.llm.invoke([HumanMessage(content=prompt)]).content.strip()
@@ -187,7 +184,7 @@ class ChatEngine:
         """
         Return up to k docs ranked for relevance.
         • Oracle-owned docs are mandatory for internal queries.
-        • Large PDFs (many chunks) are penalised so one file cannot dominate.
+        • Large PDFs are penalised so one file cannot dominate.
         """
         raw: List[Tuple[int, object]] = []
 
@@ -207,14 +204,10 @@ class ChatEngine:
                     print(f"[DEBUG] Retrieved {len(docs)} docs for {flt}")
                 raw.extend((a_idx + t_idx, d) for d in docs)
 
-        # for base_score, doc in raw:
-        #     meta = doc.metadata or {}
-        #     print(f"[DEBUG] Evaluating doc: {meta.get('source')} | oracle_owned: {meta.get('oracle_owned')}")
-
         if not raw:
             return []  # let caller decide on fallback
 
-        ranked: OrderedDict[str, Tuple[int, object]] = OrderedDict()
+        ranked = OrderedDict()
         for base_score, doc in raw:
             meta = doc.metadata or {}
 
@@ -224,7 +217,7 @@ class ChatEngine:
 
             score = base_score
 
-            # +1 boost for exact audience/type match
+            # boost for exact audience/type match
             if meta.get("audience") == audience and meta.get("type") == doc_type:
                 score -= 1
 
@@ -232,7 +225,7 @@ class ChatEngine:
             if audience == "internal" and meta.get("oracle_owned"):
                 score -= 1
 
-            # PENALTY: add 1 point for every 5 chunks beyond 10
+            # penalty for large chunk_count
             chunk_count = int(meta.get("chunk_count", 1))
             score += max(0, (chunk_count - 10) // 5)
 
@@ -245,9 +238,11 @@ class ChatEngine:
             print(f"[DEBUG] Final ranked doc count: {len(ordered)}")
             for i, (_, d) in enumerate(ordered):
                 m = d.metadata
-                print(f"    • {i}: {Path(m.get('source')).name} "
+                print(
+                    f"    • {i}: {Path(m.get('source')).name} "
                     f"| aud={m.get('audience')} type={m.get('type')} "
-                    f"chunks={m.get('chunk_count')} oracle={m.get('oracle_owned')}")
+                    f"chunks={m.get('chunk_count')} oracle={m.get('oracle_owned')}"
+                )
         return [doc for _, doc in ordered]
 
     def chat_stream(self, message: str):
@@ -269,7 +264,6 @@ class ChatEngine:
 
         # Enhance the query before performing search
         enhanced_query = self.rephrase_query(message)
-        # enhanced_query = message
         if self.debug:
             print(f"[DEBUG] Enhanced query:\n{enhanced_query}")
 
@@ -284,14 +278,6 @@ class ChatEngine:
             docs = self.db.as_retriever(
                 search_type="similarity", search_kwargs={"k": 5}
             ).invoke(enhanced_query)
-            if self.debug:
-                print(f"[DEBUG] Fallback doc list ({len(docs)} docs):")
-                for i, d in enumerate(docs):
-                    meta = d.metadata or {}
-                    print(
-                        f"    • {i}: {Path(meta.get('source', 'Unknown')).name} | "
-                        f"aud={meta.get('audience')} | type={meta.get('type')}"
-                    )
 
         history_text = "\n\n".join(f"User: {u}\nAssistant: {a}" for u, a in self.session_history)
         doc_context = "\n\n".join(d.page_content for d in docs)
@@ -372,39 +358,12 @@ class ChatEngine:
 
         self.session_history.append((message, response))
         return response, docs
-  
-        """
-        Perform a one-shot chat returning raw text and source documents for CLI use.
-        """
-        if self.debug:
-            print("\n[DEBUG] New user question:", message)
 
-        if message.lower().strip() == "reset session":
-            self.session_history.clear()
-            return "Session reset. Ask away!", []
 
-        audience, doc_type = self.classify_with_genai(message)
-        if not audience or not doc_type:
-            return self.generate_clarifying_prompt(message), []
-
-        docs = self.ranked_retrieval(message, audience, doc_type)
-        if not docs and audience == "internal":
-            return "No internal Oracle-authored content is available to reliably answer your question.", []
-        if not docs:
-            docs = list(
-                self.db.as_retriever(search_type="similarity", search_kwargs={"k": 5}).invoke(message)
-            )
-        
-        history_text = "\n\n".join(f"User: {u}\nAssistant: {a}" for u, a in self.session_history)
-        doc_context = "\n\n".join(d.page_content for d in docs)
-        context_text = f"{history_text}\n\n{doc_context}" if history_text else doc_context
-        answer_prompt = self.custom_prompt.format(context=context_text, question=message)
-
-        if hasattr(self.llm, "stream"):
-            response = "".join(chunk.content for chunk in self.llm.stream([HumanMessage(content=answer_prompt)]))
-        else:
-            response = self.llm.invoke([HumanMessage(content=answer_prompt)]).content
-
-        # update history with the full assistant response
-        self.session_history.append((message, response))
-        return response, docs
+class RagToolkit(Toolkit):
+    @tool
+    def rag(self, question: str) -> str:
+        """Answer any question that is NOT about calendar events, scheduling, meetings, or availability."""
+        engine = ChatEngine()
+        response, _ = engine.chat(question)
+        return response
