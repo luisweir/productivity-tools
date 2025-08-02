@@ -1,4 +1,6 @@
 # 🚀 Productivity Tools
+## Latest Branch Changes
+This branch introduces updates to reflect new modifications, ensuring the README is consistent with the latest branch changes.
 
 Sample Python utilities to help you learn how to use Oracle Cloud Infrastructure (OCI) Generative AI services in hands-on ways. These tools demonstrate techniques for building chat interfaces, indexing documents, classifying content, and summarising audio and video — all designed to support individual learning and experimentation. ✨
 
