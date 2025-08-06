@@ -72,6 +72,8 @@ theme = (
 
         border_color_primary="#e6c36f",
         shadow_drop="0 4px 12px rgba(0,0,0,0.25)",
+
+        code_background_fill="#2d2d2d",
     )
 )
 

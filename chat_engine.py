@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
 chat_engine.py – calendar-aware + RAG-aware chat engine using OCI ADK.
-- Auto-routes non-calendar intents to RAG by default.
-- Keeps calendar flows intact (timeframe gating, follow-ups like "with who?" stay on calendar).
-- Uses LoadConfig for endpoint/profile/region (same as mic_summary.py).
+Auto-routes non-calendar intents to RAG by default.
+Keeps calendar flows intact.
 """
 
 from __future__ import annotations
@@ -18,12 +17,10 @@ from oci.addons.adk import Agent, AgentClient
 
 from calendar_toolkit import CalendarToolkit
 from rag_toolkit import RagToolkit
-from load_config import LoadConfig  # same pattern as mic_summary.py
+from load_config import LoadConfig
 
 
-# ─────────────────────────────────────────────────────────────
-# Router regex: what counts as "calendar intent"?
-# (Deliberately broad; tune as you wish.)
+# What counts as calendar intent
 _CALENDAR_RE = re.compile(
     r"\b("
     r"calendar|schedule|meeting|meetings|event|events|invite|attendees?|"
@@ -33,19 +30,39 @@ _CALENDAR_RE = re.compile(
     re.IGNORECASE,
 )
 
-# short follow-ups that should stay on calendar after a calendar turn
+# Short follow ups that stay on calendar
 _FOLLOWUP_RE = re.compile(
     r"\b(what time|when exactly|how long|how far|how many minutes|where is it|"
     r"where|with who|attendees?|link|join|location)\b",
     re.IGNORECASE,
 )
 
-# user-supplied route tag, which we read then strip
+# Optional user route tag
 _ROUTE_TAG_RE = re.compile(r"^\s*\[ROUTE:(RAG|CAL)\]\s*", re.IGNORECASE)
 
+# Token capture, three forms
+_MS_TOKEN_PATTERNS = [
+    re.compile(r"\[\s*MS_TOKEN\s*:\s*(?P<token>[^ \]\r\n]+)\s*\]", re.IGNORECASE),
+    re.compile(r"\bMS_TOKEN\s*=\s*(?P<token>\S+)", re.IGNORECASE),
+    re.compile(r"^\s*set\s+ms\s+token\s+(?P<token>\S+)\s*$", re.IGNORECASE),
+]
 
-# ─────────────────────────────────────────────────────────────
-# Build agent (same LoadConfig pattern you had)
+TOKEN_PROMPT_HTML = (
+    "I need your Microsoft Graph access token to read your calendar. "
+    "Paste it like `[MS_TOKEN: YOUR_TOKEN]`."
+    "<br><br>"
+    "To get a Microsoft Graph access token:"
+    "<br>- Go to https://developer.microsoft.com/en-us/graph/graph-explorer"
+    "<br>- Sign in (top right corner)"
+    "<br>- Click the Access token tab"
+    "<br>- Copy the token"
+)
+
+# Shared toolkits
+_calendar_toolkit = CalendarToolkit()
+_rag_toolkit = RagToolkit()
+
+
 def build_agent() -> Agent:
     properties = LoadConfig()
     profile_name = properties.getDefaultProfile()
@@ -53,17 +70,10 @@ def build_agent() -> Agent:
     oci_region = properties.getAgentRegion()
 
     if not agent_endpoint_ocid or not agent_endpoint_ocid.startswith("ocid1.genaiagentendpoint."):
-        raise ValueError(
-            "LoadConfig().getAgentEndpointOcid() must return a valid agent-endpoint OCID."
-        )
+        raise ValueError("LoadConfig().getAgentEndpointOcid() must return a valid agent-endpoint OCID.")
 
-    client = AgentClient(
-        auth_type="api_key",
-        profile=profile_name,
-        region=oci_region,
-    )
+    client = AgentClient(auth_type="api_key", profile=profile_name, region=oci_region)
 
-    # Router-aware instructions with explicit rules
     instructions = (
         """<role>
 You are a multi-tool assistant with two capabilities:
@@ -72,21 +82,20 @@ You are a multi-tool assistant with two capabilities:
 </role>
 
 <routing-protocol>
-- If the user message begins with "[ROUTE:RAG]" → immediately use the RAG toolkit to answer. Do NOT call calendar tools for that turn.
-- If the user message begins with "[ROUTE:CAL]" → follow the calendar flow (see below). Do NOT call the RAG toolkit for that turn.
-- Otherwise (no prefix) → if the query is clearly about calendar or scheduling, use the calendar flow. For anything else, prefer the RAG toolkit.
+- If the user message begins with "[ROUTE:RAG]" use the RAG toolkit only.
+- If the user message begins with "[ROUTE:CAL]" use the calendar flow only.
+- Otherwise, if the query is clearly about calendar or scheduling, use the calendar flow. For anything else, prefer the RAG toolkit.
 </routing-protocol>
 
 <calendar-flow>
-- Never fetch calendar without a valid time window (max 7 days). If missing, ask a concise follow-up to get a window (e.g., “today”, “tomorrow”, “next 3 days”, or YYYY-MM-DD..YYYY-MM-DD).
+- Never fetch calendar without a valid time window, max 7 days. If missing, ask a concise follow-up to get a window.
 - Call resolve_timeframe(timeframe), then fetch_calendar_events(start_datetime, end_datetime).
-- The toolkit auto-detects timezone. Do NOT ask the user for timezone. Present times with the timezone included in tool output.
-- For short follow-ups like “with who?”, “where is it?”, “what time exactly?”, or “how long from now?”, assume they refer to the last calendar results and answer directly from those results. If an event object contains "startsInMinutes", use it to answer “how long” questions.
+- Do not ask for timezone. The toolkit normalises times and includes the zone name in results.
+- Short follow-ups like “with who?”, “where is it?”, “what time exactly?”, and “how long from now?” refer to the last calendar results.
 </calendar-flow>
 
 <rag-flow>
-- For non-calendar questions, call the RAG toolkit once with the user question and answer with that tool's output.
-- Do not answer from your own knowledge for non-calendar turns.
+- For non-calendar questions, call the RAG toolkit once with the user question and return that output.
 </rag-flow>
 
 <format>
@@ -94,36 +103,27 @@ Return clean, simple HTML (no CSS/JS). Use concise paragraphs and lists.
 </format>"""
     )
 
-    # Ordering RAG first biases the model toward it for non-calendar turns.
     return Agent(
         client=client,
         agent_endpoint_id=agent_endpoint_ocid,
         instructions=instructions,
-        tools=[RagToolkit(), CalendarToolkit()],
+        tools=[_rag_toolkit, _calendar_toolkit],
     )
 
 
-# Build once, reuse
 calendar_agent: Agent = build_agent()
 
 
-# ─────────────────────────────────────────────────────────────
-#  Chat engine with a lightweight pre-router
-# ─────────────────────────────────────────────────────────────
 class ChatEngine:
     def __init__(self, debug: bool = False):
         self._agent = calendar_agent
         self._session_id: Optional[str] = None
         self._last_domain: Optional[str] = None  # 'calendar' | 'rag'
+        self._pending_calendar_msg: Optional[str] = None  # last calendar ask waiting for token
         if debug:
             logging.basicConfig(level=logging.DEBUG)
 
     def _infer_domain(self, text: str) -> str:
-        """Heuristic router:
-        - If message is short/elliptical and we have a last domain → reuse it.
-        - Else if it matches calendar cues → 'calendar'
-        - Else → 'rag'
-        """
         t = (text or "").strip()
         if len(t) <= 24 and self._last_domain:
             return self._last_domain
@@ -132,46 +132,86 @@ class ChatEngine:
         return "rag"
 
     def _prefix_for_domain(self, domain: str) -> str:
-        if domain == "calendar":
-            return "[ROUTE:CAL] "
-        return "[ROUTE:RAG] "
+        return "[ROUTE:CAL] " if domain == "calendar" else "[ROUTE:RAG] "
+
+    def _maybe_capture_ms_token(self, text: str) -> Optional[str]:
+        for rx in _MS_TOKEN_PATTERNS:
+            m = rx.search(text or "")
+            if m:
+                return m.group("token").strip()
+        return None
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
-        # Manual reset
+        # Reset
         if user_message.lower().strip() == "reset session":
             if self._session_id:
                 try:
                     self._agent.delete_session(self._session_id)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logging.debug("delete_session failed: %s", exc)
             self._session_id = None
             self._last_domain = None
+            self._pending_calendar_msg = None
             yield "Session reset. Ask away!"
             return
 
         try:
-            # detect and strip a user-supplied route tag
+            # 1) If the user pasted an MS token, save it and optionally replay pending ask
+            pasted_token = self._maybe_capture_ms_token(user_message or "")
+            if pasted_token:
+                try:
+                    _calendar_toolkit.set_ms_token(pasted_token)
+                except Exception:
+                    logging.exception("Failed to set MS token")
+                    yield TOKEN_PROMPT_HTML
+                    return
+
+                if self._pending_calendar_msg:
+                    msg_to_rerun = self._pending_calendar_msg
+                    self._pending_calendar_msg = None
+                    yield "Saved Microsoft Graph token. Checking your calendar now…"
+                    routed_message = f"{self._prefix_for_domain('calendar')}{msg_to_rerun}"
+                    response = self._agent.run(
+                        routed_message,
+                        session_id=self._session_id,
+                        max_steps=5,
+                    )
+                    self._session_id = response.session_id
+                    self._last_domain = "calendar"
+                    text = response.output or str(response)
+                    yield text if text.lstrip().startswith("<") else text.replace("\n", "<br>")
+                    return
+
+                yield "Saved Microsoft Graph token for this session. Ask your calendar question."
+                return
+
+            # 2) Decide domain, allow user override tag
             forced_domain: Optional[str] = None
             m = _ROUTE_TAG_RE.match(user_message or "")
             if m:
                 forced_domain = "rag" if m.group(1).upper() == "RAG" else "calendar"
             clean_msg = _ROUTE_TAG_RE.sub("", user_message or "")
 
-            # decide route
             domain = forced_domain or self._infer_domain(clean_msg)
 
-            # if last turn was calendar and this looks like a short follow up, force calendar
+            # If last turn was calendar and this looks like a short follow up, force calendar
             if self._last_domain == "calendar" and _FOLLOWUP_RE.search(clean_msg):
                 domain = "calendar"
 
-            # if RAG, call the toolkit directly to ensure RAG is used
+            # 3) If calendar but token missing, ask for it and remember the ask
+            if domain == "calendar" and not _calendar_toolkit.has_ms_token():
+                self._pending_calendar_msg = clean_msg
+                yield TOKEN_PROMPT_HTML
+                return
+
+            # 4) If RAG, call the toolkit directly so we never fall back to general knowledge
             if domain == "rag":
-                html = RagToolkit().rag(clean_msg)
+                html = _rag_toolkit.rag(clean_msg)
                 self._last_domain = "rag"
                 yield html if html.lstrip().startswith("<") else html.replace("\n", "<br>")
                 return
 
-            # otherwise use the agent with calendar tools
+            # 5) Calendar with token available, run the agent
             routed_message = f"{self._prefix_for_domain(domain)}{clean_msg}"
             response = self._agent.run(
                 routed_message,
@@ -179,23 +219,15 @@ class ChatEngine:
                 max_steps=5,
             )
             self._session_id = response.session_id
-            self._last_domain = domain  # remember for short follow-ups
+            self._last_domain = domain
 
             text = response.output or str(response)
-            stripped = text.lstrip()
-            # If the agent already produced HTML, do not inject <br>
-            if stripped.startswith("<") or "<html" in stripped[:200].lower():
-                yield text
-            else:
-                yield text.replace("\n", "<br>")
+            yield text if text.lstrip().startswith("<") else text.replace("\n", "<br>")
         except Exception:
             logging.exception("Agent run failed")
             yield "Sorry, something went wrong. Please try again."
 
 
-# ─────────────────────────────────────────────────────────────
-#  CLI – same as before
-# ─────────────────────────────────────────────────────────────
 def main() -> None:
     parser = argparse.ArgumentParser(description="OCI ADK calendar + RAG chat engine")
     grp = parser.add_mutually_exclusive_group(required=True)

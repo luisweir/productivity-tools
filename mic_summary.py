@@ -126,7 +126,8 @@ def summarize_transcript(client, transcript: str) -> str:
         "In all cases:\n"
         "- Summarise the overall sentiment or tone of the call (e.g. collaborative, tense, enthusiastic, confused). Note any shifts in mood\n"
         "- Attribute points to speakers wherever identity is clear or implied. Avoid generic phrasing like 'someone said' if attribution can be inferred\n"
-        "- Note if any parts of the transcript are unclear, noisy, or incomplete\n\n"
+        "- Note if any parts of the transcript are unclear, noisy, or incomplete\n"
+        "- Use British spelling\n\n"
 
         "Use clear section headers and bullet points. Ensure no critical point, insight, or decision is missed.\n\n"
         "Structure the summary as follows: 1) Participants, 2) Type of Recording, 3) Sentiment, 4) Key Topics, 5) Actions & Owners, 6) Decisions, 7) Notable Quotes or Examples.\n\n"
@@ -165,6 +166,9 @@ def main():
     parser.add_argument("--use-transcript", type=str, help="Path to an existing transcript file")
     parser.add_argument("--output-dir", type=str, default="./out", help="Directory to save output files")
     args = parser.parse_args()
+    # If a transcript file is provided and output directory is default, use transcript file's directory
+    if args.use_transcript and args.output_dir == './out':
+        args.output_dir = os.path.dirname(os.path.abspath(args.use_transcript)) or '.'
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M")
     output_dir = args.output_dir
@@ -175,10 +179,33 @@ def main():
     summary_file = f"{base_path}-summary.txt"
 
     if args.use_transcript:
+        transcript_path = os.path.abspath(args.use_transcript)
+        # If default output directory is used, use the transcript file's directory
+        if args.output_dir == "./out":
+            output_dir = os.path.dirname(transcript_path) or '.'
+        else:
+            output_dir = args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
         print("📓 Using existing transcript...")
-        with open(args.use_transcript, "r", encoding="utf-8") as f:
+        with open(transcript_path, "r", encoding="utf-8") as f:
             transcript = f.read()
+
+        # Derive summary file name from the input transcript's file name
+        base_name, ext = os.path.splitext(os.path.basename(transcript_path))
+        if "full_transcript" in base_name:
+            summary_filename = base_name.replace("full_transcript", "summary") + ext
+        else:
+            summary_filename = base_name + "-summary" + ext
+        summary_file = os.path.join(output_dir, summary_filename)
     else:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+        output_dir = args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        base_path = os.path.join(output_dir, f"{args.output_base}-{timestamp}")
+        transcript_file = f"{base_path}-full_transcript.txt"
+        summary_file = f"{base_path}-summary.txt"
+
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_path = os.path.join(tmpdir, "recording.wav")
             record_audio()

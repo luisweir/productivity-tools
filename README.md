@@ -1,6 +1,4 @@
 # 🚀 Productivity Tools
-## Latest Branch Changes
-This branch introduces updates to reflect new modifications, ensuring the README is consistent with the latest branch changes.
 
 Sample Python utilities to help you learn how to use Oracle Cloud Infrastructure (OCI) Generative AI services in hands-on ways. These tools demonstrate techniques for building chat interfaces, indexing documents, classifying content, and summarising audio and video — all designed to support individual learning and experimentation. ✨
 
@@ -12,12 +10,12 @@ Sample Python utilities to help you learn how to use Oracle Cloud Infrastructure
   - [⚙️ Configuration](#️-configuration)
   - [🛠️ Setup](#️-setup)
   - [💡 Utilities](#-utilities)
-    - [💬 chatpion_web.py](#-chatpion_webpy)
-    - [💬 chatpion_cli.py](#-chatpion_cli_py)
-    - [🔍 faiss_ingest.py](#-faiss_ingestpy)
-    - [📂 classify_docs.py](#-classify_docs_py)
-    - [🎤 mic_summary.py](#-mic_summary_py)
-    - [🎥 video_summary_gen.py](#-video_summary_genpy)
+    - [💬 chatpion\_web.py](#-chatpion_webpy)
+    - [💬 chatpion\_cli.py](#-chatpion_clipy)
+    - [🔍 faiss\_ingest.py](#-faiss_ingestpy)
+    - [📂 classify\_docs.py](#-classify_docspy)
+    - [🎤 mic\_summary.py](#-mic_summarypy)
+    - [🎥 video\_summary\_gen.py](#-video_summary_genpy)
   - [🤝 Contributing](#-contributing)
   - [License 📜](#license-)
   - [Disclaimer ⚠️](#disclaimer-️)
@@ -153,6 +151,22 @@ python mic_summary.py --output-base <base name> --use-transcript <transcript.txt
 python video_summary_gen.py
 ```
 *Videos to process should be listed in `videos.txt`, one video file path per line.*
+
+### 📅 calendar_toolkit.py
+**Description:** Provides utilities for calendar integration including Microsoft token management and timezone resolution via OCI Toolkit.
+**Prerequisites:**
+  - Python 3.7 or higher
+  - pip install requests tzlocal oci
+**Usage:**
+This module is intended to be imported and used as part of the OCI Toolkit.
+
+### 📅 calendar_toolkit.py
+**Description:** Provides utilities for calendar integration including Microsoft token management and timezone resolution via OCI Toolkit.
+**Prerequisites:**
+  - Python 3.7 or higher
+  - pip install requests tzlocal oci
+**Usage:**
+This module is intended to be imported and used as part of the OCI Toolkit.
 
 ## 🤝 Contributing
 

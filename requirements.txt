@@ -15,4 +15,5 @@ sounddevice
 tkinter
 tqdm
 requests
-tzlocal
+ tzlocal
+ backports.zoneinfo; python_version < "3.9"
