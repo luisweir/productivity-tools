@@ -163,6 +163,56 @@ class CalendarToolkit(Toolkit):
         def day_end(dt: datetime) -> datetime:
             return dt.astimezone(timezone.utc).replace(hour=23, minute=59, second=59, microsecond=0)
 
+        def week_bounds(dt: datetime) -> tuple[datetime, datetime]:
+            # ISO: Monday is 1 ... Sunday is 7
+            weekday = dt.isoweekday()
+            # start = Monday of this week
+            start = day_start(dt - timedelta(days=weekday - 1))
+            end = day_end(start + timedelta(days=6))
+            return start, end
+
+        def word_to_int(token: str) -> Optional[int]:
+            token = token.strip().lower()
+            words = {
+                "one": 1,
+                "two": 2,
+                "three": 3,
+                "four": 4,
+                "five": 5,
+                "six": 6,
+                "seven": 7,
+                "eight": 8,
+                "nine": 9,
+                "ten": 10,
+            }
+            if token.isdigit():
+                return int(token)
+            return words.get(token)
+
+        # ── Week-based intents: 'this week', 'next week', or 'in N weeks' ──
+        m_weeks = re.match(r"^\s*(?:in|next)\s+(?P<n>\w+)\s+weeks?\s*$", tf)
+        if tf in {"this week"}:
+            start_dt, end_dt = week_bounds(now)
+            return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
+
+        if tf in {"next week"}:
+            start_dt, end_dt = week_bounds(now + timedelta(days=7))
+            return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
+
+        if m_weeks:
+            n_token = m_weeks.group("n")
+            n = word_to_int(n_token)
+            if n is None:
+                # fall through to other handlers
+                n = None
+            else:
+                if n < 0:
+                    raise ValueError("Week offset must be positive.")
+                # For 'in N weeks' we return the full week starting N weeks from now
+                start_dt, _ = week_bounds(now + timedelta(days=7 * n))
+                end_dt = day_end(start_dt + timedelta(days=6))
+                return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
+
         # ── Robust "next meeting / event / appointment" intent ──
         # Trigger if we see "next" or "upcoming" + one of the keywords anywhere
         if (re.search(r"\b(next|upcoming)\b", tf)
@@ -196,9 +246,17 @@ class CalendarToolkit(Toolkit):
             end_dt = day_end(tmr)
             return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
 
-        m = re.match(r"^\s*next\s+(\d{1,2})\s+days?\s*$", tf)
-        if m:
-            n = int(m.group(1))
+        # 'next N days' or 'in N days' -> range from now (inclusive) to now + N-1 days
+        m_days = re.match(r"^\s*(?:next|in)\s+(?P<n>\w+)\s+days?\s*$", tf)
+        if m_days:
+            n_token = m_days.group("n")
+            n = word_to_int(n_token)
+            if n is None:
+                # fallback to strict digit match
+                try:
+                    n = int(n_token)
+                except Exception:
+                    raise ValueError("Unsupported number for days.")
             if n < 1:
                 raise ValueError("N must be at least 1.")
             if n > MAX_DAYS:
