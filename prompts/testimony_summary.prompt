@@ -1,0 +1,21 @@
+## Goal
+Create concise, engaging Key Takeaways from AI Champion testimony transcripts that will attract viewers to watch the full YouTube video while accurately representing the most compelling content from the testimony.
+
+## Return format
+A brief text summary structured as follows:
+- Opening sentence: "In this testimony, watch [Champion Name] share insights on [main topics covered]."
+- Followed by: "Some notable highlights include:" and 3-5 numbered, compelling points from the testimony
+- Total length should be brief enough to fit effectively in a YouTube description while capturing the essence of the testimony
+
+## Warnings
+- Avoid overgeneralizing or misrepresenting the champion's views
+- Don't include minor details that don't serve to attract viewers
+- Ensure the takeaways accurately reflect the actual content of the testimony
+- Don't exaggerate claims or create clickbait that doesn't align with the testimony's substance
+- Avoid technical jargon that might confuse general audiences unless it's central to the testimony
+
+## Context
+The takeaways will be used in YouTube video descriptions for AI Champion testimonies. These descriptions need to be concise yet compelling enough to encourage viewers to watch the full video. The target audience includes people interested in AI developments, applications, and perspectives. The takeaways should highlight the most insightful, thought-provoking, or unique aspects of the testimony to maximize viewer interest while maintaining accuracy and integrity of the champion's message.
+
+# Transcript
+{transcript}

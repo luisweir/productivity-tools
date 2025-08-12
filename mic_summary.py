@@ -11,6 +11,21 @@
 #   python mic_summary.py --use-transcript <path to an existing transcript file>
 #   python mic_summary.py --output-dir <directory path to save output files>
 #   python mic_summary.py --output-base <base name> --use-transcript <path/to/transcript.txt> --output-dir <output_directory>
+#
+# Prompt customization (--prompt-name):
+#   --prompt-name controls the prompt used when generating the summary. If omitted or set to "default",
+#   the script uses a built-in prompt. Otherwise it will try to load a file named <prompt-name>.prompt
+#   from one of several candidate locations (the .prompt extension is optional):
+#     - ./<prompt-name>.prompt
+#     - ./prompts/<prompt-name>.prompt
+#     - next to this script: <script_dir>/<prompt-name>.prompt
+#     - next to this script in prompts/: <script_dir>/prompts/<prompt-name>.prompt
+#     - ~/prompts/<prompt-name>.prompt
+#     - or an explicit path you supply (absolute or relative)
+#
+#   If the prompt file contains the placeholder {transcript} it will be replaced with the actual
+#   transcript; otherwise the transcript will be appended under a "Transcript:" section. A sample
+#   prompt is provided at ./prompts/slack_summary.prompt.
 
 import warnings
 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")
@@ -101,15 +116,15 @@ def transcribe_audio(audio_path: str) -> str:
         transcript += f"{speaker}: {seg['text'].strip()}\n"
     return transcript.strip() or result.get("text", "").strip()
 
-def summarize_transcript(client, transcript: str) -> str:
-    prompt_text = (
+
+def _default_prompt(transcript: str) -> str:
+    return (
         "You are a summarisation assistant. Carefully analyse the following transcript. First, determine the type of recording "
         "(e.g. meeting, presentation, interview, podcast, lecture, casual conversation). Then extract and summarise the key information "
         "with high coverage. Do not skip technical details, specific examples, or critical explanations.\n\n"
 
-        "Before anything else, identify the **participants in the call**. Do this by analysing who is actively speaking in the transcript. "
-        "Ignore any individuals who are only mentioned or referenced by others but do not speak directly. "
-        "List the names (or identifiers) of all speakers who contribute verbally to the conversation.\n\n"
+        "Before anything else, identify the participants in the call. Do this by analysing who is actively speaking in the transcript. "
+        "Ignore any individuals who are only mentioned or referenced by others but do not speak directly.\n\n"
 
         "If the recording is a meeting, clearly identify:\n"
         "- All key discussion points (group them if needed)\n"
@@ -136,6 +151,42 @@ def summarize_transcript(client, transcript: str) -> str:
         f"{transcript.strip()}\n\n"
     )
 
+
+def _read_prompt_file(prompt_name: str) -> str:
+    candidates = []
+    name = prompt_name
+    has_ext = os.path.splitext(name)[1].lower() == ".prompt"
+    if os.sep in name or os.path.isabs(name):
+        candidates.append(name if has_ext else f"{name}.prompt")
+    else:
+        candidates.append(f"{name}.prompt")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates.append(os.path.join(script_dir, f"{name}.prompt"))
+        candidates.append(os.path.join(script_dir, "prompts", f"{name}.prompt"))
+        home_prompts = os.path.join(os.path.expanduser("~"), "prompts", f"{name}.prompt")
+        candidates.append(home_prompts)
+        cwd_prompts = os.path.join(os.getcwd(), "prompts", f"{name}.prompt")
+        candidates.insert(1, cwd_prompts)
+
+    for path in candidates:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+    raise FileNotFoundError(
+        f"Prompt file not found for '{prompt_name}'. Looked for: {', '.join(candidates)}"
+    )
+
+
+def build_prompt(transcript: str, prompt_name: str) -> str:
+    if prompt_name and prompt_name.strip().lower() != "default":
+        prompt_text = _read_prompt_file(prompt_name.strip())
+        if "{transcript}" in prompt_text:
+            return prompt_text.replace("{transcript}", transcript.strip())
+        return f"{prompt_text.rstrip()}\n\nTranscript:\n{transcript.strip()}\n"
+    return _default_prompt(transcript)
+
+def summarize_transcript(client, transcript: str, prompt_name: str = "default") -> str:
+    prompt_text = build_prompt(transcript, prompt_name)
     content = TextContent(text=prompt_text)
     message = Message(role="USER", content=[content])
     chat_request = GenericChatRequest(
@@ -165,6 +216,16 @@ def main():
     parser.add_argument("--output-base", type=str, default="recording", help="Base name for output files")
     parser.add_argument("--use-transcript", type=str, help="Path to an existing transcript file")
     parser.add_argument("--output-dir", type=str, default="./out", help="Directory to save output files")
+    parser.add_argument(
+        "--prompt-name",
+        type=str,
+        default="default",
+        help=(
+            "Name of the prompt to use. 'default' uses a built-in prompt. Any other value will load text "
+            "from <prompt-name>.prompt (supports optional path and .prompt extension). If the file contains "
+            "{transcript}, it will be replaced; otherwise the transcript will be appended."
+        ),
+    )
     args = parser.parse_args()
     # If a transcript file is provided and output directory is default, use transcript file's directory
     if args.use_transcript and args.output_dir == './out':
@@ -216,7 +277,7 @@ def main():
 
     print("📡 Generating summary with OCI Gen AI...")
     client = get_oci_client()
-    summary = summarize_transcript(client, transcript)
+    summary = summarize_transcript(client, transcript, args.prompt_name)
     write_file(summary_file, summary)
 
     if not args.use_transcript:

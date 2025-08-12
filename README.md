@@ -138,6 +138,18 @@ python mic_summary.py --use-transcript <path/to/transcript.txt>
 python mic_summary.py --output-dir <directory path>
 python mic_summary.py --output-base <base name> --use-transcript <transcript.txt> --output-dir <directory>
 ```
+Additional options:
+- Use --prompt-name to load a custom prompt template for the summariser (e.g. --prompt-name slack_summary). Prompt files are searched for in several locations including ./prompts/, next to the script, and ~/prompts/. If the prompt file contains {transcript} it will be substituted; otherwise the transcript will be appended.
+
+Example CLI (using the provided slack_summary prompt):
+
+```bash
+# Summarise a transcript captured earlier using the slack_summary template
+python mic_summary.py --use-transcript /path/to/transcript.txt --prompt-name slack_summary
+
+# Summarise videos listed in videos.txt using the slack_summary template
+python video_summary_gen.py --videos-file videos.txt --prompt-name slack_summary
+```
 
 ### 🎥 video_summary_gen.py
 **Description:** Accelerate video content analysis by transcribing and summarizing videos; reads video paths from `videos.txt`, extracts audio via Whisper, and generates summaries using OCI Generative AI.
@@ -151,6 +163,8 @@ python mic_summary.py --output-base <base name> --use-transcript <transcript.txt
 python video_summary_gen.py
 ```
 *Videos to process should be listed in `videos.txt`, one video file path per line.*
+Additional options:
+- Use --prompt-name to select a custom prompt template (default uses a built-in prompt). Prompt files follow the same lookup rules as mic_summary.py (./prompts/, script dir, ~/prompts/, or explicit path). If the file includes {transcript} it will be replaced with the transcript text; otherwise the transcript will be appended under a Transcript: header.
 
 ### 📅 calendar_toolkit.py
 **Description:** Provides utilities for calendar integration including Microsoft token management and timezone resolution via OCI Toolkit.
