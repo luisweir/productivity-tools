@@ -717,13 +717,10 @@ def run_live(args: argparse.Namespace) -> int:
     )
     write_text(summary_path, summary + footer)
     log.info("Wrote summary:   %s", pstr(summary_path))
-    # If we recorded audio for this live session (i.e. not using --use-transcript),
-    # remove the persisted .wav file after successful transcription and summarisation
     try:
-        if not getattr(args, "use_transcript", None):
-            if audio_path.exists():
-                audio_path.unlink()
-                log.info("Deleted temporary live audio: %s", pstr(audio_path))
+        if not getattr(args, "use_transcript", None) and audio_path.exists():
+            audio_path.unlink()
+            log.info("Deleted temporary live audio: %s", pstr(audio_path))
     except Exception:
         log.warning("Failed to delete temporary audio file: %s", pstr(audio_path))
 
