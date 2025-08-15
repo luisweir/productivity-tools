@@ -49,10 +49,8 @@
 #   --model                  Placeholder flag, accepted for compatibility
 #   --chunking               Placeholder flag, accepted for compatibility
 #   --log-level LEVEL        Logging level [debug,info,warning,error]
-#   --model-args true|false  (removed) Previously allowed disabling model tuning args
-#                           Model tuning arguments (max_tokens, temperature, frequency_penalty,
-#                           presence_penalty, top_p, top_k) are included by default and cannot
-#                           be disabled via CLI in this build.
+#   --no-model-args          Disables model tuning arguments (max_tokens, temperature, frequency_penalty,
+#                            presence_penalty, top_p, top_k) for models that don't support them like OpenAI o3.
 #
 # media.sources file format
 #   One media path per line
@@ -402,7 +400,7 @@ def summarise_text(
 # =======================================================================================
 
 def deterministic_paths(output_dir: Path, base: str) -> Tuple[Path, Path]:
-    summary = output_dir / f"{base}.summary.md"
+    summary = output_dir / f"{base}.summary.txt"
     transcript = output_dir / f"{base}.transcript.txt"
     return summary, transcript
 
@@ -719,6 +717,16 @@ def run_live(args: argparse.Namespace) -> int:
     )
     write_text(summary_path, summary + footer)
     log.info("Wrote summary:   %s", pstr(summary_path))
+    # If we recorded audio for this live session (i.e. not using --use-transcript),
+    # remove the persisted .wav file after successful transcription and summarisation
+    try:
+        if not getattr(args, "use_transcript", None):
+            if audio_path.exists():
+                audio_path.unlink()
+                log.info("Deleted temporary live audio: %s", pstr(audio_path))
+    except Exception:
+        log.warning("Failed to delete temporary audio file: %s", pstr(audio_path))
+
     return 0
 
 # =======================================================================================

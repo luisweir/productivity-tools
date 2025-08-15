@@ -1,0 +1,25 @@
+## Goal
+Create concise, engaging key takeaways from informative video transcripts that attract viewers to watch the full YouTube video while staying accurate.
+
+## Return format
+A brief text summary structured as follows:
+
+- Opening sentence: use one of these, based on the transcript:
+  * "In this video, learn about \[main topics covered]."
+  * If a speaker or organisation is clearly identified: "In this video, \[Name or Organisation] \[explains / demonstrates / explores] \[main topics covered]."
+- Followed by: "Some notable highlights include:" and 3 to 5 numbered, compelling points from the video.
+- Keep it brief enough to fit well in a YouTube description while capturing the essence of the video.
+
+## Warnings
+- Do not overgeneralise or misrepresent the content.
+- Do not include minor details that do not help attract viewers.
+- Ensure the takeaways match the actual video content.
+- Avoid exaggeration or clickbait.
+- Use clear, simple language. Avoid jargon unless it is essential to the explanation.
+
+## Context
+
+The takeaways will be used in YouTube descriptions for informative videos across any topic. The audience is people interested in learning something new. Highlight the most useful, thought-provoking, or unique aspects to maximise interest while keeping accuracy and integrity.
+
+## Transcript
+{transcript}
