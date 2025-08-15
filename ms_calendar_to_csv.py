@@ -13,7 +13,7 @@
 #        export MS_TOKEN="paste_your_token_here"
 #
 # Usage:
-#   python ms_calendar_to_csv.py --start 2025-07-28T00:00:00Z --end 2025-08-01T23:59:59Z
+#   python ms_calendar_to_csv.py --start 2025-08-10T00:00:00Z --end 2025-08-15T23:59:59Z
 #
 # Output:
 #   Generates a CSV file named `calendar_events.csv` with structured calendar data

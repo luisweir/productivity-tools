@@ -6,7 +6,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
-from tzlocal import get_localzone_name
+try:
+    from tzlocal import get_localzone_name  # type: ignore
+except Exception:
+    get_localzone_name = None
 import requests
 from zoneinfo import ZoneInfo
 from oci.addons.adk import Toolkit, tool
@@ -21,7 +24,17 @@ logger.info(f"[CalendarToolkit] loaded version {CALTK_VERSION}")
 
 # ────────────────────────── Constants ──────────────────────────
 ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-MAX_DAYS = 7
+# Maximum allowed days for calendar windows. Make configurable via env var
+# CALENDAR_MAX_DAYS. Value is clamped to [1, 365]. Default is 7 to preserve
+# existing behaviour unless explicitly overridden.
+try:
+    _env_max = int(os.getenv("CALENDAR_MAX_DAYS") or 0)
+except Exception:
+    _env_max = 0
+if _env_max <= 0:
+    MAX_DAYS = 7
+else:
+    MAX_DAYS = max(1, min(_env_max, 365))
 
 _IANA_TO_WINDOWS = {
     "UTC": "UTC",
@@ -191,6 +204,9 @@ class CalendarToolkit(Toolkit):
 
         # ── Week-based intents: 'this week', 'next week', or 'in N weeks' ──
         m_weeks = re.match(r"^\s*(?:in|next)\s+(?P<n>\w+)\s+weeks?\s*$", tf)
+        # More flexible week phrasing: match 'in two weeks', 'two weeks from now',
+        # or 'what about two weeks from now' anywhere in the string.
+        m_weeks_any = re.search(r"(?:in\s+)?(?P<n_any>\w+)\s+weeks?(?:\s+from\s+now)?", tf)
         if tf in {"this week"}:
             start_dt, end_dt = week_bounds(now)
             return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
@@ -213,6 +229,24 @@ class CalendarToolkit(Toolkit):
                 end_dt = day_end(start_dt + timedelta(days=6))
                 return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
 
+        # If we find a week-phrase anywhere in the text, use that (covers
+        # 'two weeks from now', 'what about in three weeks', etc.). Prefer the
+        # anchored match if both present.
+        if not m_weeks and m_weeks_any:
+            n_token = m_weeks_any.group("n_any")
+            n = word_to_int(n_token)
+            if n is None:
+                try:
+                    n = int(n_token)
+                except Exception:
+                    n = None
+            if n is not None:
+                if n < 0:
+                    raise ValueError("Week offset must be positive.")
+                start_dt, _ = week_bounds(now + timedelta(days=7 * n))
+                end_dt = day_end(start_dt + timedelta(days=6))
+                return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
+
         # ── Robust "next meeting / event / appointment" intent ──
         # Trigger if we see "next" or "upcoming" + one of the keywords anywhere
         if (re.search(r"\b(next|upcoming)\b", tf)
@@ -230,7 +264,7 @@ class CalendarToolkit(Toolkit):
             if d2 < d1:
                 raise ValueError("End date must be after or equal to start date.")
             if (d2 - d1) > timedelta(days=MAX_DAYS - 1):
-                raise ValueError(f"Time frame cannot exceed {MAX_DAYS} days.")
+                raise ValueError(f"Time frame cannot exceed {MAX_DAYS} days (set CALENDAR_MAX_DAYS to change).")
             start_dt = day_start(d1)
             end_dt = day_end(d2)
             return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
@@ -260,7 +294,7 @@ class CalendarToolkit(Toolkit):
             if n < 1:
                 raise ValueError("N must be at least 1.")
             if n > MAX_DAYS:
-                raise ValueError(f"Time frame cannot exceed {MAX_DAYS} days.")
+                raise ValueError(f"Time frame cannot exceed {MAX_DAYS} days (set CALENDAR_MAX_DAYS to change).")
             start_dt = now
             end_dt = day_end(now + timedelta(days=n - 1))
             return {"start_datetime": start_dt.strftime(ISO_FORMAT), "end_datetime": end_dt.strftime(ISO_FORMAT)}
@@ -288,7 +322,7 @@ class CalendarToolkit(Toolkit):
         if end <= start:
             raise ValueError("end_datetime must be after start_datetime.")
         if (end - start) > timedelta(days=MAX_DAYS):
-            raise ValueError(f"Time frame cannot exceed {MAX_DAYS} days.")
+            raise ValueError(f"Time frame cannot exceed {MAX_DAYS} days (set CALENDAR_MAX_DAYS to change).")
 
         token = self._get_ms_token()
         if not token:

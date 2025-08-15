@@ -4,6 +4,7 @@
 .codex/
 .env*
 *.env
+*.sources
 tmp/
 temp/
 out/

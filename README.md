@@ -124,47 +124,22 @@ python classify_docs.py --input file1.pdf file2.pdf /path/to/folder     # classi
 python classify_docs.py --debug --input /path/to/pdf_folder             # enable debug logging
 ```
 
-### 🎤 mic_summary.py
-**Description:** Improve note-taking productivity by recording microphone audio, transcribing speech locally with Whisper, and summarizing the transcript using OCI Generative AI.
+### 🎬 media_champion.py
+**Description:** A unified, optimized script that replaces mic_summary.py and video_summary_gen.py. media_champion.py can record or ingest microphone audio, transcribe local audio/video files (via Whisper/ffmpeg), and summarise transcripts using OCI Generative AI. It consolidates features for both audio and video processing and provides a single interface for media summarisation.
 **Prerequisites:**
 - Python 3.7 or higher
-- portaudio (macOS: `brew install portaudio`; Ubuntu: `sudo apt-get install portaudio19-dev`)
+- ffmpeg (for video/audio extraction; macOS: `brew install ffmpeg`; Ubuntu: `sudo apt-get install ffmpeg`)
+- portaudio (if recording from microphone; macOS: `brew install portaudio`; Ubuntu: `sudo apt-get install portaudio19-dev`)
 - pip3 install openai-whisper sounddevice scipy numpy oci
 - Ensure OCI CLI config is set up in ~/.oci/config
 **Usage:**
 ```bash
-python mic_summary.py --output-base <base name for output files>
-python mic_summary.py --use-transcript <path/to/transcript.txt>
-python mic_summary.py --output-dir <directory path>
-python mic_summary.py --output-base <base name> --use-transcript <transcript.txt> --output-dir <directory>
+python media_champion.py --media-list videos.txt                    # process listed media files
+python media_champion.py --use-transcript /path/to/transcript.txt  # summarise an existing transcript
+python media_champion.py --record --output-base session1           # record from mic, transcribe and summarise
 ```
 Additional options:
 - Use --prompt-name to load a custom prompt template for the summariser (e.g. --prompt-name slack_summary). Prompt files are searched for in several locations including ./prompts/, next to the script, and ~/prompts/. If the prompt file contains {transcript} it will be substituted; otherwise the transcript will be appended.
-
-Example CLI (using the provided slack_summary prompt):
-
-```bash
-# Summarise a transcript captured earlier using the slack_summary template
-python mic_summary.py --use-transcript /path/to/transcript.txt --prompt-name slack_summary
-
-# Summarise videos listed in videos.txt using the slack_summary template
-python video_summary_gen.py --videos-file videos.txt --prompt-name slack_summary
-```
-
-### 🎥 video_summary_gen.py
-**Description:** Accelerate video content analysis by transcribing and summarizing videos; reads video paths from `videos.txt`, extracts audio via Whisper, and generates summaries using OCI Generative AI.
-**Prerequisites:**
-- Python 3.7 or higher
-- ffmpeg (macOS: `brew install ffmpeg`; Ubuntu: `sudo apt-get install ffmpeg`)
-- pip3 install openai-whisper oci
-- Ensure OCI CLI config is set up in ~/.oci/config
-**Usage:**
-```bash
-python video_summary_gen.py
-```
-*Videos to process should be listed in `videos.txt`, one video file path per line.*
-Additional options:
-- Use --prompt-name to select a custom prompt template (default uses a built-in prompt). Prompt files follow the same lookup rules as mic_summary.py (./prompts/, script dir, ~/prompts/, or explicit path). If the file includes {transcript} it will be replaced with the transcript text; otherwise the transcript will be appended under a Transcript: header.
 
 ### 📅 calendar_toolkit.py
 **Description:** Provides utilities for calendar integration including Microsoft token management and timezone resolution via OCI Toolkit.
