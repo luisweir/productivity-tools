@@ -15,9 +15,7 @@ import os
 import signal
 import sys
 from pathlib import Path
-
 import gradio as gr
-
 from chat_engine import ChatEngine
 
 DEBUG = "--debug" in sys.argv
@@ -74,6 +72,8 @@ theme = (
 
         border_color_primary="#e6c36f",
         shadow_drop="0 4px 12px rgba(0,0,0,0.25)",
+
+        code_background_fill="#2d2d2d",
     )
 )
 

@@ -1,410 +1,255 @@
 #!/usr/bin/env python3
 """
-Common chat engine for RAG-enabled OCI Generative AI applications.
-Includes classification, retrieval, and streaming/chat logic shared by chatpion_web.py and chatpion_cli.py.
+chat_engine.py – calendar-aware + RAG-aware chat engine using OCI ADK.
+Auto-routes non-calendar intents to RAG by default.
+Keeps calendar flows intact.
 """
-import re
+
+from __future__ import annotations
+
 import os
-from collections import OrderedDict
-from pathlib import Path
-from typing import List, Tuple
+import re
+import argparse
+import logging
+from typing import Generator, Optional
 
-from langchain.prompts import PromptTemplate
-from langchain.schema import HumanMessage
-from langchain_community.chat_models.oci_generative_ai import ChatOCIGenAI
-from langchain_community.embeddings import OCIGenAIEmbeddings
-from langchain_community.vectorstores import FAISS
+from oci.addons.adk import Agent, AgentClient
 
+from calendar_toolkit import CalendarToolkit
+from rag_toolkit import RagToolkit
 from load_config import LoadConfig
 
 
+# What counts as calendar intent
+_CALENDAR_RE = re.compile(
+    r"\b("
+    r"calendar|schedule|meeting|meetings|event|events|invite|attendees?|"
+    r"busy|free|availability|when|what time|where|room|today|tomorrow|"
+    r"this week|next week|next \d+\s*(days?|hours?)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Short follow ups that stay on calendar
+_FOLLOWUP_RE = re.compile(
+    r"\b(what time|when exactly|how long|how far|how many minutes|where is it|"
+    r"where|with who|attendees?|link|join|location)\b",
+    re.IGNORECASE,
+)
+
+# Optional user route tag
+_ROUTE_TAG_RE = re.compile(r"^\s*\[ROUTE:(RAG|CAL)\]\s*", re.IGNORECASE)
+
+# Token capture, three forms
+_MS_TOKEN_PATTERNS = [
+    re.compile(r"\[\s*MS_TOKEN\s*:\s*(?P<token>[^ \]\r\n]+)\s*\]", re.IGNORECASE),
+    re.compile(r"\bMS_TOKEN\s*=\s*(?P<token>\S+)", re.IGNORECASE),
+    re.compile(r"^\s*set\s+ms\s+token\s+(?P<token>\S+)\s*$", re.IGNORECASE),
+]
+
+TOKEN_PROMPT_HTML = (
+    "I need your Microsoft Graph access token to read your calendar. "
+    "Paste it like `[MS_TOKEN: YOUR_TOKEN]`."
+    "<br><br>"
+    "To get a Microsoft Graph access token:"
+    "<br>- Go to https://developer.microsoft.com/en-us/graph/graph-explorer"
+    "<br>- Sign in (top right corner)"
+    "<br>- Click the Access token tab"
+    "<br>- Copy the token"
+)
+
+# Shared toolkits
+_calendar_toolkit = CalendarToolkit()
+_rag_toolkit = RagToolkit()
+
+
+def build_agent() -> Agent:
+    properties = LoadConfig()
+    profile_name = properties.getDefaultProfile()
+    agent_endpoint_ocid = properties.getAgentEndpointOcid()
+    oci_region = properties.getAgentRegion()
+
+    if not agent_endpoint_ocid or not agent_endpoint_ocid.startswith("ocid1.genaiagentendpoint."):
+        raise ValueError("LoadConfig().getAgentEndpointOcid() must return a valid agent-endpoint OCID.")
+
+    client = AgentClient(auth_type="api_key", profile=profile_name, region=oci_region)
+
+    instructions = (
+        """<role>
+You are a multi-tool assistant with two capabilities:
+1) Calendar assistant (timeframe-gated Microsoft 365 reads).
+2) RAG assistant (answer general questions using the rag toolkit).
+</role>
+
+<routing-protocol>
+- If the user message begins with "[ROUTE:RAG]" use the RAG toolkit only.
+- If the user message begins with "[ROUTE:CAL]" use the calendar flow only.
+- Otherwise, if the query is clearly about calendar or scheduling, use the calendar flow. For anything else, prefer the RAG toolkit.
+</routing-protocol>
+
+<calendar-flow>
+- Never fetch calendar without a valid time window, max 7 days. If missing, ask a concise follow-up to get a window.
+- Call resolve_timeframe(timeframe), then fetch_calendar_events(start_datetime, end_datetime).
+- Do not ask for timezone. The toolkit normalises times and includes the zone name in results.
+- Short follow-ups like “with who?”, “where is it?”, “what time exactly?”, and “how long from now?” refer to the last calendar results.
+</calendar-flow>
+
+<rag-flow>
+- For non-calendar questions, call the RAG toolkit once with the user question and return that output.
+</rag-flow>
+
+<format>
+Return clean, simple HTML (no CSS/JS). Use concise paragraphs and lists.
+</format>"""
+    )
+
+    return Agent(
+        client=client,
+        agent_endpoint_id=agent_endpoint_ocid,
+        instructions=instructions,
+        tools=[_rag_toolkit, _calendar_toolkit],
+    )
+
+
+calendar_agent: Agent = build_agent()
+
+
 class ChatEngine:
-    """
-    ChatEngine encapsulates classification, retrieval, and chat operations
-    for RAG-enabled OCI Generative AI assistants.
-    """
+    def __init__(self, debug: bool = False):
+        self._agent = calendar_agent
+        self._session_id: Optional[str] = None
+        self._last_domain: Optional[str] = None  # 'calendar' | 'rag'
+        self._pending_calendar_msg: Optional[str] = None  # last calendar ask waiting for token
+        if debug:
+            logging.basicConfig(level=logging.DEBUG)
 
-    ALLOWED_AUDIENCES = {
-        "business": "Executives, sales, strategy, partners, human resources, people, society…",
-        "technical": "Developers, architects, engineers, quality assurance, devops, system design…",
-        "general": "Non‑technical and non‑business content intended for a broad audience…",
-        "internal": "Oracle internal documents. Assume the user is an Oracle employee.",
-    }
+    def _infer_domain(self, text: str) -> str:
+        t = (text or "").strip()
+        if len(t) <= 24 and self._last_domain:
+            return self._last_domain
+        if _CALENDAR_RE.search(t):
+            return "calendar"
+        return "rag"
 
-    ALLOWED_TYPES = {
-        "insight": "Conceptual, strategic thinking or high‑level concepts",
-        "deepdive": "Detailed content, excluding internal procedures or standards.",
-        "research": "Research‑focused publications",
-        "governance": "Internal tools, corporate guidelines, policies and processes",
-    }
+    def _prefix_for_domain(self, domain: str) -> str:
+        return "[ROUTE:CAL] " if domain == "calendar" else "[ROUTE:RAG] "
 
-    def __init__(self, debug: bool = False, index_dir: str = "faiss_index"):
-        self.debug = debug
-        props = LoadConfig()
+    def _maybe_capture_ms_token(self, text: str) -> Optional[str]:
+        for rx in _MS_TOKEN_PATTERNS:
+            m = rx.search(text or "")
+            if m:
+                return m.group("token").strip()
+        return None
 
-        self.llm = ChatOCIGenAI(
-            model_id=props.getModelName(),
-            service_endpoint=props.getEndpoint(),
-            compartment_id=props.getCompartment(),
-            model_kwargs = {
-                "max_tokens": 800,               # LLaMA 3 handles long outputs well. 800 gives more room.
-                "temperature": 0.2,              # Lower = more deterministic. Ideal for factual answers.
-                "top_p": 0.9,                    # Keeps diversity without harming coherence.
-                "top_k": 40,                     # Helps filter low-probability noise, but optional.
-                "frequency_penalty": 0.1,        # Light penalty to avoid repeated phrases.
-                "presence_penalty": 0.0,         # Neutral. Don't push novelty.
-                "num_generations": 1,           # Only one needed for assistant behaviour.
-            }
-        )
-        self.embed = OCIGenAIEmbeddings(
-            model_id=props.getEmbeddingModelName(),
-            service_endpoint=props.getEndpoint(),
-            compartment_id=props.getCompartment(),
-        )
-        self.db = FAISS.load_local(index_dir, self.embed, allow_dangerous_deserialization=True)
-
-        if self.debug:
-            print(f"[DEBUG] FAISS index contains {len(self.db.docstore._dict)} docs")
-            count = sum(
-                1 for d in self.db.docstore._dict.values()
-                if d.metadata.get("audience") == "internal"
-                and d.metadata.get("type") == "governance"
-                and d.metadata.get("oracle_owned") is True
-            )
-            print(f"[DEBUG] internal-governance oracle_owned=True docs: {count}")
-
-        self.custom_prompt = PromptTemplate(
-            input_variables=["context", "question"],
-            template=(
-                "You are a helpful AI assistant. Using the context below, answer the question in a clear, "
-                "professional and slightly more elaborate way with HTML formatting.\n\n"
-                "Context:\n{context}\n\nQuestion:\n{question}\n\nAnswer:"
-            ),
-        )
-        # history of (user question, assistant answer) for multi-turn context
-        self.session_history: List[Tuple[str, str]] = []
-
-    def rephrase_query(self, question: str) -> str:
-        """
-        Use LLM to rephrase the user's question to improve retrieval quality.
-        """
-        prompt = (
-            "Situation:\n"
-            "You are a query expansion specialist working on a document retrieval system used by Oracle employees.\n"
-            "User queries may refer to Oracle internal tools, processes, or documentation. Unless clearly about public or general topics, always assume the context is internal to Oracle.\n"
-            "Queries are often too brief or vague to return the most relevant documents.\n\n"
-
-            "Task:\n"
-            "Expand the user's original query by adding relevant clarifications, related terms, synonyms, and domain-specific phrases. "
-            "You must preserve every word from the original query, in the exact order and form. Only additions are allowed—no deletion, substitution, or reordering.\n\n"
-
-            "Objective:\n"
-            "Maximise the relevance and completeness of retrieved documents by capturing the full intent behind the user's query. "
-            "Avoid over-expanding or drifting from the original meaning. Maintain semantic accuracy.\n\n"
-
-            "Knowledge:\n"
-            "- Effective expansions include related terms, Oracle-specific terminology, synonyms, and sub-questions\n"
-            "- Do not remove or alter the original words\n"
-            "- Add only high-signal terms that enhance document retrieval\n"
-            "- Assume the user is looking for Oracle-internal answers unless the topic is clearly public (e.g. Python syntax, external APIs)\n"
-            "- Include clarifying follow-ups if they help expose intent (e.g. approvals, guidelines, access steps)\n\n"
-
-            "Example:\n"
-            "Original prompt: what external AI tools can I use?\n"
-            "Expanded prompt: what external non-Oracle AI tools can I use? which tools are approved? which require approval? where are the Oracle usage guidelines?\n\n"
-
-            "Return only the expanded search prompt. No explanations, comments, or formatting.\n\n"
-            f"Original prompt: {question}\n"
-            "Expanded prompt:"
-        )
-        
-        if self.debug:
-            print(f"[DEBUG] Rephrasing prompt:\n{prompt}")
-        return self.llm.invoke([HumanMessage(content=prompt)]).content.strip()
-
-    def classify_with_genai(self, query: str) -> Tuple[str | None, str | None]:
-        """
-        Classify the user query into (audience, type) labels using OCI Generative AI.
-        """
-        audience_expl = "\n".join(f"- {k}: {v}" for k, v in self.ALLOWED_AUDIENCES.items())
-        type_expl = "\n".join(f"- {k}: {v}" for k, v in self.ALLOWED_TYPES.items())
-        extra_rules = (
-            "Guidelines:\n"
-            "• Always assume the user is an Oracle employee. Questions may refer to Oracle internal tools, processes, or documentation.\n"
-            "• Default to *internal* unless the question clearly applies beyond Oracle, with high confidence (e.g. public tech concepts, general knowledge).\n"
-            "• Choose *governance* only for policy, compliance, or review-process queries.\n"
-            "Examples:\n"
-            "  Q: 'What tools can I use?' → internal_governance\n"
-            "  Q: 'Can I use tool <any tool name>?' → internal_governance\n"
-            "  Q: 'What does the policy say about model training data?' → internal_governance\n"
-            "  Q: 'What is the process to get approval for using external third party tools?' → internal_governance\n"
-            "  Q: 'Explain RAG architecture in simple terms.' → general_insight\n"
-            "  Q: 'Show me the Python SDK for OCI Generative AI.' → technical_deepdive\n"
-            "  Q: 'How do I request access to the internal fine-tuning service?' → internal\n"
-        )
-
-        prompt = (
-            "You are an AI classification assistant. Classify the user question into two labels (audience and type).\n\n"
-            f"Valid Audience values:\n{audience_expl}\n\n"
-            f"Valid Type values:\n{type_expl}\n\n"
-            f"{extra_rules}\n"
-            "Return the labels in the exact format `audience_type` with no other text.\n\n"
-            f"User question:\n{query}\n\nYour response:"
-        )
-        if self.debug:
-            print("\n[DEBUG] Classification prompt:\n", prompt)
-
-        raw = (
-            self.llm.invoke([HumanMessage(content=prompt)])
-            .content.strip()
-            .lower()
-            .replace("-", "_")
-            .replace(" ", "_")
-        )
-        if self.debug:
-            print("[DEBUG] Classification response:", raw)
-
-        pattern = rf"^({'|'.join(self.ALLOWED_AUDIENCES)})_({'|'.join(self.ALLOWED_TYPES)})$"
-        m = re.match(pattern, raw)
-        return (m.group(1), m.group(2)) if m else (None, None)
-
-    def generate_clarifying_prompt(self, msg: str) -> str:
-        """
-        Generate a concise follow-up question when classification confidence is low.
-        """
-        prompt = (
-            "You're an AI assistant that could not confidently classify the user's intent.\n"
-            "Ask one concise follow-up question to clarify both audience and type.\n\n"
-            f"User message:\n{msg}\n"
-        )
-        if self.debug:
-            print("[DEBUG] Clarifying prompt input:\n", prompt)
-        return self.llm.invoke([HumanMessage(content=prompt)]).content.strip()
-
-    def ranked_retrieval(
-        self, query: str, audience: str, doc_type: str, k: int = 5
-    ) -> List:
-        """
-        Return up to k docs ranked for relevance.
-        • Oracle-owned docs are mandatory for internal queries.
-        • Large PDFs (many chunks) are penalised so one file cannot dominate.
-        """
-        raw: List[Tuple[int, object]] = []
-
-        # iterate audience/type permutations, best matches first
-        aud_rank = [audience] + [a for a in self.ALLOWED_AUDIENCES if a != audience]
-        typ_rank = [doc_type] + [t for t in self.ALLOWED_TYPES if t != doc_type]
-
-        for a_idx, aud in enumerate(aud_rank):
-            for t_idx, typ in enumerate(typ_rank):
-                flt = {"audience": aud, "type": typ}
-                if self.debug:
-                    print(f"[DEBUG] Running filter: {flt}")
-                docs = self.db.as_retriever(
-                    search_type="similarity", search_kwargs={"k": k, "filter": flt}
-                ).invoke(query)
-                if self.debug:
-                    print(f"[DEBUG] Retrieved {len(docs)} docs for {flt}")
-                raw.extend((a_idx + t_idx, d) for d in docs)
-
-        # for base_score, doc in raw:
-        #     meta = doc.metadata or {}
-        #     print(f"[DEBUG] Evaluating doc: {meta.get('source')} | oracle_owned: {meta.get('oracle_owned')}")
-
-        if not raw:
-            return []  # let caller decide on fallback
-
-        ranked: OrderedDict[str, Tuple[int, object]] = OrderedDict()
-        for base_score, doc in raw:
-            meta = doc.metadata or {}
-
-            # internal queries must be Oracle-owned
-            if audience == "internal" and not meta.get("oracle_owned"):
-                continue
-
-            score = base_score
-
-            # +1 boost for exact audience/type match
-            if meta.get("audience") == audience and meta.get("type") == doc_type:
-                score -= 1
-
-            # extra boost for Oracle-owned internal docs
-            if audience == "internal" and meta.get("oracle_owned"):
-                score -= 1
-
-            # PENALTY: add 1 point for every 5 chunks beyond 10
-            chunk_count = int(meta.get("chunk_count", 1))
-            score += max(0, (chunk_count - 10) // 5)
-
-            key = f"{meta.get('source','unknown')}#{meta.get('page',0)}"
-            if key not in ranked or score < ranked[key][0]:
-                ranked[key] = (score, doc)
-
-        ordered = sorted(ranked.values(), key=lambda x: x[0])[:k]
-        if self.debug:
-            print(f"[DEBUG] Final ranked doc count: {len(ordered)}")
-            for i, (_, d) in enumerate(ordered):
-                m = d.metadata
-                print(f"    • {i}: {Path(m.get('source')).name} "
-                    f"| aud={m.get('audience')} type={m.get('type')} "
-                    f"chunks={m.get('chunk_count')} oracle={m.get('oracle_owned')}")
-        return [doc for _, doc in ordered]
-
-    def chat_stream(self, message: str):
-        if self.debug:
-            print("\n[DEBUG] New user question:", message)
-
-        if message.lower().strip() == "reset session":
-            self.session_history.clear()
+    def chat_stream(self, user_message: str) -> Generator[str, None, None]:
+        # Reset
+        if user_message.lower().strip() == "reset session":
+            if self._session_id:
+                try:
+                    self._agent.delete_session(self._session_id)
+                except Exception as exc:
+                    logging.debug("delete_session failed: %s", exc)
+            self._session_id = None
+            self._last_domain = None
+            self._pending_calendar_msg = None
             yield "Session reset. Ask away!"
             return
 
-        audience, doc_type = self.classify_with_genai(message)
-        if not audience or not doc_type:
-            yield self.generate_clarifying_prompt(message)
-            return
+        try:
+            # 1) If the user pasted an MS token, save it and optionally replay pending ask
+            pasted_token = self._maybe_capture_ms_token(user_message or "")
+            if pasted_token:
+                try:
+                    _calendar_toolkit.set_ms_token(pasted_token)
+                except Exception:
+                    logging.exception("Failed to set MS token")
+                    yield TOKEN_PROMPT_HTML
+                    return
 
-        if self.debug:
-            print(f"[DEBUG] Classified as {audience}_{doc_type}")
-
-        # Enhance the query before performing search
-        enhanced_query = self.rephrase_query(message)
-        # enhanced_query = message
-        if self.debug:
-            print(f"[DEBUG] Enhanced query:\n{enhanced_query}")
-
-        docs = self.ranked_retrieval(enhanced_query, audience, doc_type)
-
-        if not docs:
-            if audience == "internal":
-                yield "No internal Oracle-authored content is available to reliably answer your question."
-                return
-            if self.debug:
-                print("[DEBUG] No docs found, performing fallback search (non-internal)")
-            docs = self.db.as_retriever(
-                search_type="similarity", search_kwargs={"k": 5}
-            ).invoke(enhanced_query)
-            if self.debug:
-                print(f"[DEBUG] Fallback doc list ({len(docs)} docs):")
-                for i, d in enumerate(docs):
-                    meta = d.metadata or {}
-                    print(
-                        f"    • {i}: {Path(meta.get('source', 'Unknown')).name} | "
-                        f"aud={meta.get('audience')} | type={meta.get('type')}"
+                if self._pending_calendar_msg:
+                    msg_to_rerun = self._pending_calendar_msg
+                    self._pending_calendar_msg = None
+                    yield "Saved Microsoft Graph token. Checking your calendar now…"
+                    routed_message = f"{self._prefix_for_domain('calendar')}{msg_to_rerun}"
+                    response = self._agent.run(
+                        routed_message,
+                        session_id=self._session_id,
+                        max_steps=5,
                     )
+                    self._session_id = response.session_id
+                    self._last_domain = "calendar"
+                    text = response.output or str(response)
+                    yield text if text.lstrip().startswith("<") else text.replace("\n", "<br>")
+                    return
 
-        history_text = "\n\n".join(f"User: {u}\nAssistant: {a}" for u, a in self.session_history)
-        doc_context = "\n\n".join(d.page_content for d in docs)
-        context_text = f"{history_text}\n\n{doc_context}" if history_text else doc_context
-        answer_prompt = self.custom_prompt.format(context=context_text, question=message)
+                yield "Saved Microsoft Graph token for this session. Ask your calendar question."
+                return
 
-        partial = ""
-        if hasattr(self.llm, "stream"):
-            for chunk in self.llm.stream([HumanMessage(content=answer_prompt)]):
-                partial += chunk.content
-                yield partial.replace("\n", "<br>")
-        else:
-            partial = self.llm.invoke([HumanMessage(content=answer_prompt)]).content
-            yield partial.replace("\n", "<br>")
+            # 2) Decide domain, allow user override tag
+            forced_domain: Optional[str] = None
+            m = _ROUTE_TAG_RE.match(user_message or "")
+            if m:
+                forced_domain = "rag" if m.group(1).upper() == "RAG" else "calendar"
+            clean_msg = _ROUTE_TAG_RE.sub("", user_message or "")
 
-        seen, items = set(), []
-        for d in docs:
-            meta = d.metadata or {}
-            src = meta.get("source", "Unknown")
-            if src in seen:
-                continue
-            seen.add(src)
-            fn = Path(src).name
-            project_root = Path(__file__).parent.resolve()
-            try:
-                rel_path = Path(src).resolve().relative_to(project_root).as_posix()
-                href = f"/gradio_api/file={rel_path}"
-            except ValueError:
-                href = f"file://{Path(src).resolve()}"
-            label = "Oracle" if meta.get("oracle_owned") else "External"
-            link = f'<a href="{href}" target="_blank">{fn}</a>'
-            items.append(f"<li>{link} ({label} | {meta.get('audience', 'unknown')} | {meta.get('type', 'unknown')})</li>")
+            domain = forced_domain or self._infer_domain(clean_msg)
 
-        if items:
-            sources_html = (
-                '<div style="font-size:13px;margin-top:15px;color:#444;">'
-                '<strong>Sources used:</strong><ul>' + "".join(items) + '</ul></div>'
+            # If last turn was calendar and this looks like a short follow up, force calendar
+            if self._last_domain == "calendar" and _FOLLOWUP_RE.search(clean_msg):
+                domain = "calendar"
+
+            # 3) If calendar but token missing, ask for it and remember the ask
+            if domain == "calendar" and not _calendar_toolkit.has_ms_token():
+                self._pending_calendar_msg = clean_msg
+                yield TOKEN_PROMPT_HTML
+                return
+
+            # 4) If RAG, call the toolkit directly so we never fall back to general knowledge
+            if domain == "rag":
+                html = _rag_toolkit.rag(clean_msg)
+                self._last_domain = "rag"
+                yield html if html.lstrip().startswith("<") else html.replace("\n", "<br>")
+                return
+
+            # 5) Calendar with token available, run the agent
+            routed_message = f"{self._prefix_for_domain(domain)}{clean_msg}"
+            response = self._agent.run(
+                routed_message,
+                session_id=self._session_id,
+                max_steps=5,
             )
-            yield partial.replace("\n", "<br>") + sources_html
+            self._session_id = response.session_id
+            self._last_domain = domain
 
-        self.session_history.append((message, partial))
+            text = response.output or str(response)
+            yield text if text.lstrip().startswith("<") else text.replace("\n", "<br>")
+        except Exception:
+            logging.exception("Agent run failed")
+            yield "Sorry, something went wrong. Please try again."
 
-    def chat(self, message: str) -> Tuple[str, List]:
-        if self.debug:
-            print("\n[DEBUG] New user question:", message)
 
-        if message.lower().strip() == "reset session":
-            self.session_history.clear()
-            return "Session reset. Ask away!", []
+def main() -> None:
+    parser = argparse.ArgumentParser(description="OCI ADK calendar + RAG chat engine")
+    grp = parser.add_mutually_exclusive_group(required=True)
+    grp.add_argument("--setup", action="store_true", help="Run agent.setup()")
+    grp.add_argument("--chat", metavar="PROMPT", help="Single-shot prompt")
+    parser.add_argument("--debug", action="store_true")
+    args = parser.parse_args()
 
-        audience, doc_type = self.classify_with_genai(message)
-        if not audience or not doc_type:
-            return self.generate_clarifying_prompt(message), []
+    if args.debug:
+        os.environ.setdefault("ADK_LOG_LEVEL", "DEBUG")
+        logging.basicConfig(level=logging.DEBUG)
 
-        # Enhance the query before performing search
-        enhanced_query = self.rephrase_query(message)
-        if self.debug:
-            print(f"[DEBUG] Enhanced query:\n{enhanced_query}")
+    if args.setup:
+        print("Running agent.setup() …")
+        calendar_agent.setup()
+        print("Setup completed.")
+        return
 
-        docs = self.ranked_retrieval(enhanced_query, audience, doc_type)
+    if args.chat:
+        for chunk in ChatEngine(debug=args.debug).chat_stream(args.chat):
+            print(chunk)
 
-        if not docs and audience == "internal":
-            return "No internal Oracle-authored content is available to reliably answer your question.", []
-        if not docs:
-            docs = list(
-                self.db.as_retriever(search_type="similarity", search_kwargs={"k": 10}).invoke(enhanced_query)
-            )
 
-        history_text = "\n\n".join(f"User: {u}\nAssistant: {a}" for u, a in self.session_history)
-        doc_context = "\n\n".join(d.page_content for d in docs)
-        context_text = f"{history_text}\n\n{doc_context}" if history_text else doc_context
-        answer_prompt = self.custom_prompt.format(context=context_text, question=message)
-
-        if hasattr(self.llm, "stream"):
-            response = "".join(chunk.content for chunk in self.llm.stream([HumanMessage(content=answer_prompt)]))
-        else:
-            response = self.llm.invoke([HumanMessage(content=answer_prompt)]).content
-
-        self.session_history.append((message, response))
-        return response, docs
-  
-        """
-        Perform a one-shot chat returning raw text and source documents for CLI use.
-        """
-        if self.debug:
-            print("\n[DEBUG] New user question:", message)
-
-        if message.lower().strip() == "reset session":
-            self.session_history.clear()
-            return "Session reset. Ask away!", []
-
-        audience, doc_type = self.classify_with_genai(message)
-        if not audience or not doc_type:
-            return self.generate_clarifying_prompt(message), []
-
-        docs = self.ranked_retrieval(message, audience, doc_type)
-        if not docs and audience == "internal":
-            return "No internal Oracle-authored content is available to reliably answer your question.", []
-        if not docs:
-            docs = list(
-                self.db.as_retriever(search_type="similarity", search_kwargs={"k": 5}).invoke(message)
-            )
-        
-        history_text = "\n\n".join(f"User: {u}\nAssistant: {a}" for u, a in self.session_history)
-        doc_context = "\n\n".join(d.page_content for d in docs)
-        context_text = f"{history_text}\n\n{doc_context}" if history_text else doc_context
-        answer_prompt = self.custom_prompt.format(context=context_text, question=message)
-
-        if hasattr(self.llm, "stream"):
-            response = "".join(chunk.content for chunk in self.llm.stream([HumanMessage(content=answer_prompt)]))
-        else:
-            response = self.llm.invoke([HumanMessage(content=answer_prompt)]).content
-
-        # update history with the full assistant response
-        self.session_history.append((message, response))
-        return response, docs
+if __name__ == "__main__":
+    main()
