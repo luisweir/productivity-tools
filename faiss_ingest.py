@@ -65,8 +65,6 @@ def is_oracle_owned(path: str, DEBUG: bool = False) -> bool:
     from pathlib import Path
 
     content_indicators = [
-        "oracle confidential",
-        "internal use only",
         "© oracle",
         "oracle and/or its affiliates",
         "oracle corporation",
