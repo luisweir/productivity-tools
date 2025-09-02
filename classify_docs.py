@@ -41,7 +41,7 @@ parser.add_argument("--input", type=str, nargs='+', help="Path(s) to PDF files o
 args = parser.parse_args()
 DEBUG = args.debug
 
-from chat_engine import ChatEngine
+from rag_toolkit import ChatEngine
 
 ALLOWED_AUDIENCES = ChatEngine.ALLOWED_AUDIENCES
 ALLOWED_TYPES = ChatEngine.ALLOWED_TYPES
@@ -156,12 +156,13 @@ def classify_with_genai(text_sample, existing_classes, word_count):
     chat_request = GenericChatRequest(
         api_format=BaseChatRequest.API_FORMAT_GENERIC,
         messages=[message],
-        max_tokens=200,
-        temperature=0.2,
-        frequency_penalty=0,
-        presence_penalty=0,
-        top_p=1,
-        top_k=0
+        # Uncomment if model supports it, otherwise you'll get "Argument not supported on this model: presencePenalty"
+        # max_tokens=200,
+        # temperature=0.2,
+        # frequency_penalty=0,
+        # presence_penalty=0,
+        # top_p=1,
+        # top_k=0
     )
     chat_detail = ChatDetails(
         serving_mode=OnDemandServingMode(model_id=properties.getModelOcid()),

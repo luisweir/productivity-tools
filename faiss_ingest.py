@@ -22,7 +22,6 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import OCIGenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from PyPDF2 import PdfReader
 import argparse
 from load_config import LoadConfig
 

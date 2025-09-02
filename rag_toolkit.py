@@ -92,8 +92,8 @@ class ChatEngine:
         """
         prompt = (
             "Situation:\n"
-            "You are a query expansion specialist working on a document retrieval system used by Oracle employees.\n"
-            "User queries may refer to Oracle internal tools, processes, or documentation. Unless clearly about public or general topics, always assume the context is internal to Oracle.\n"
+            "You are a query expansion specialist working on a document retrieval system.\n"
+            "User queries may refer to internal corporate topics, public technology topics, or general knowledge.\n"
             "Queries are often too brief or vague to return the most relevant documents.\n\n"
             "Task:\n"
             "Expand the user's original query by adding relevant clarifications, related terms, synonyms, and domain-specific phrases. "
@@ -102,14 +102,14 @@ class ChatEngine:
             "Maximise the relevance and completeness of retrieved documents by capturing the full intent behind the user's query. "
             "Avoid over-expanding or drifting from the original meaning. Maintain semantic accuracy.\n\n"
             "Knowledge:\n"
-            "- Effective expansions include related terms, Oracle-specific terminology, synonyms, and sub-questions\n"
+            "- Effective expansions include related terms, relevant terminology, synonyms, and sub-questions\n"
             "- Do not remove or alter the original words\n"
             "- Add only high-signal terms that enhance document retrieval\n"
-            "- Assume the user is looking for Oracle-internal answers unless the topic is clearly public (e.g. Python syntax, external APIs)\n"
+            "- Do NOT assume the user is asking about any specific company or internal context. If it's unclear, keep expansions neutral and broad.\n"
             "- Include clarifying follow-ups if they help expose intent (e.g. approvals, guidelines, access steps)\n\n"
             "Example:\n"
             "Original prompt: what external AI tools can I use?\n"
-            "Expanded prompt: what external non-Oracle AI tools can I use? which tools are approved? which require approval? where are the Oracle usage guidelines?\n\n"
+            "Expanded prompt: what external AI tools can I use? which tools are commonly used? which require approval in enterprise settings? where are usage guidelines?\n\n"
             "Return only the expanded search prompt. No explanations, comments, or formatting.\n\n"
             f"Original prompt: {question}\n"
             "Expanded prompt:"
@@ -127,17 +127,16 @@ class ChatEngine:
         type_expl = "\n".join(f"- {k}: {v}" for k, v in self.ALLOWED_TYPES.items())
         extra_rules = (
             "Guidelines:\n"
-            "• Always assume the user is an Oracle employee. Questions may refer to Oracle internal tools, processes, or documentation.\n"
-            "• Default to *internal* unless the question clearly applies beyond Oracle, with high confidence (e.g. public tech concepts, general knowledge).\n"
+            "• Do NOT assume the user is asking about Oracle or any specific company. Treat questions as ambiguous by default.\n"
+            "• If you can confidently map the question to one of the allowed audiences and types, return that mapping.\n"
+            "• If the intent or scope is unclear, return the value `unknown` for audience and/or type.\n"
             "• Choose *governance* only for policy, compliance, or review-process queries.\n"
             "Examples:\n"
-            "  Q: 'What tools can I use?' → internal_governance\n"
-            "  Q: 'Can I use tool <any tool name>?' → internal_governance\n"
+            "  Q: 'What tools can I use?' → unknown_unknown\n"
+            "  Q: 'Can I use tool <any tool name> internally?' → internal_governance\n"
             "  Q: 'What does the policy say about model training data?' → internal_governance\n"
-            "  Q: 'What is the process to get approval for using external third party tools?' → internal_governance\n"
             "  Q: 'Explain RAG architecture in simple terms.' → general_insight\n"
             "  Q: 'Show me the Python SDK for OCI Generative AI.' → technical_deepdive\n"
-            "  Q: 'How do I request access to the internal fine-tuning service?' → internal\n"
         )
 
         prompt = (
@@ -161,9 +160,19 @@ class ChatEngine:
         if self.debug:
             print("[DEBUG] Classification response:", raw)
 
-        pattern = rf"^({'|'.join(self.ALLOWED_AUDIENCES)})_({'|'.join(self.ALLOWED_TYPES)})$"
+        # Accept 'unknown' as a valid return value for audience or type
+        allowed_audiences = list(self.ALLOWED_AUDIENCES.keys()) + ["unknown"]
+        allowed_types = list(self.ALLOWED_TYPES.keys()) + ["unknown"]
+        pattern = rf"^({'|'.join(allowed_audiences)})_({'|'.join(allowed_types)})$"
         m = re.match(pattern, raw)
-        return (m.group(1), m.group(2)) if m else (None, None)
+        if not m:
+            return (None, None)
+        aud, typ = m.group(1), m.group(2)
+        if aud == "unknown":
+            aud = None
+        if typ == "unknown":
+            typ = None
+        return (aud, typ)
 
     def generate_clarifying_prompt(self, msg: str) -> str:
         """
@@ -171,7 +180,11 @@ class ChatEngine:
         """
         prompt = (
             "You're an AI assistant that could not confidently classify the user's intent.\n"
-            "Ask one concise follow-up question to clarify both audience and type.\n\n"
+            "Ask one concise, structured follow-up question to clarify the user's intent so you can choose an audience and a content type.\n"
+            "Provide the user with a short list of options they can pick from. For example:\n"
+            "- Audience: internal (Oracle), technical, business, general\n"
+            "- Type: insight, deepdive, research, governance\n\n"
+            "Then ask the user to indicate which audience and type best describe their question, or to provide more context if none apply.\n\n"
             f"User message:\n{msg}\n"
         )
         if self.debug:
@@ -189,8 +202,17 @@ class ChatEngine:
         raw: List[Tuple[int, object]] = []
 
         # iterate audience/type permutations, best matches first
-        aud_rank = [audience] + [a for a in self.ALLOWED_AUDIENCES if a != audience]
-        typ_rank = [doc_type] + [t for t in self.ALLOWED_TYPES if t != doc_type]
+        # If audience or type is unknown (None), search across all allowed values
+        aud_rank = (
+            [audience] + [a for a in self.ALLOWED_AUDIENCES if a != audience]
+            if audience
+            else list(self.ALLOWED_AUDIENCES.keys())
+        )
+        typ_rank = (
+            [doc_type] + [t for t in self.ALLOWED_TYPES if t != doc_type]
+            if doc_type
+            else list(self.ALLOWED_TYPES.keys())
+        )
 
         for a_idx, aud in enumerate(aud_rank):
             for t_idx, typ in enumerate(typ_rank):
@@ -255,9 +277,8 @@ class ChatEngine:
             return
 
         audience, doc_type = self.classify_with_genai(message)
-        if not audience or not doc_type:
-            yield self.generate_clarifying_prompt(message)
-            return
+        # perform search regardless of whether classification returned unknowns
+        needs_clarify = audience is None or doc_type is None
 
         if self.debug:
             print(f"[DEBUG] Classified as {audience}_{doc_type}")
@@ -320,6 +341,16 @@ class ChatEngine:
 
         self.session_history.append((message, partial))
 
+        # If classification was uncertain, also ask a concise follow-up to refine audience/type
+        if needs_clarify:
+            try:
+                clarify = self.generate_clarifying_prompt(message)
+                yield "<div style=\"margin-top:12px;color:#444;\"><strong>Follow-up:</strong> " + clarify.replace("\n", "<br>") + "</div>"
+            except Exception:
+                # do not fail the stream if clarifying prompt generation fails
+                if self.debug:
+                    print("[DEBUG] Failed to generate clarifying prompt")
+
     def chat(self, message: str) -> Tuple[str, List]:
         if self.debug:
             print("\n[DEBUG] New user question:", message)
@@ -329,8 +360,8 @@ class ChatEngine:
             return "Session reset. Ask away!", []
 
         audience, doc_type = self.classify_with_genai(message)
-        if not audience or not doc_type:
-            return self.generate_clarifying_prompt(message), []
+        # perform search even if classification could not confidently pick audience/type
+        needs_clarify = audience is None or doc_type is None
 
         # Enhance the query before performing search
         enhanced_query = self.rephrase_query(message)
@@ -357,13 +388,66 @@ class ChatEngine:
             response = self.llm.invoke([HumanMessage(content=answer_prompt)]).content
 
         self.session_history.append((message, response))
+
+        # If classification was uncertain, append a clarifying follow-up question so the user can refine
+        if needs_clarify:
+            try:
+                clarify = self.generate_clarifying_prompt(message)
+                # add with spacing so UI can show it as a separate follow-up
+                response = (
+                    (response if isinstance(response, str) else str(response))
+                    + "\n\nFollow-up question: "
+                    + clarify
+                )
+            except Exception:
+                if self.debug:
+                    print("[DEBUG] Failed to generate clarifying prompt")
+
         return response, docs
 
 
 class RagToolkit(Toolkit):
+    def __init__(self):
+        super().__init__()
+        # reuse a single ChatEngine instance so session history persists across calls
+        self._engine = ChatEngine(debug=False)
+
     @tool
-    def rag(self, question: str) -> str:
-        """Answer any question that is NOT about calendar events, scheduling, meetings, or availability."""
-        engine = ChatEngine()
-        response, _ = engine.chat(question)
+    def rag(self, question: str, debug: bool = False) -> str:
+        """Answer any question that is NOT about calendar events, scheduling, meetings, or availability.
+
+        Accepts optional debug flag so callers (like chatpion_web) can enable debug logging in the
+        underlying RAG ChatEngine. Returns HTML that includes the answer and a list of source
+        references (if any documents were used).
+        """
+        # keep a persistent engine so multi-turn context (session_history) is preserved
+        self._engine.debug = debug
+        response, docs = self._engine.chat(question)
+
+        # If there are retrieved documents, append a small "Sources used" section
+        items = []
+        seen = set()
+        for d in docs:
+            meta = d.metadata or {}
+            src = meta.get("source", "Unknown")
+            if src in seen:
+                continue
+            seen.add(src)
+            fn = Path(src).name
+            project_root = Path(__file__).parent.resolve()
+            try:
+                rel_path = Path(src).resolve().relative_to(project_root).as_posix()
+                href = f"/gradio_api/file={rel_path}"
+            except Exception:
+                href = f"file://{Path(src).resolve()}"
+            label = "Oracle" if meta.get("oracle_owned") else "External"
+            items.append(f"<li><a href=\"{href}\" target=\"_blank\">{fn}</a> ({label} | {meta.get('audience', 'unknown')} | {meta.get('type', 'unknown')})</li>")
+
+        if items:
+            sources_html = (
+                '<div style="font-size:13px;margin-top:15px;color:#444;">'
+                '<strong>Sources used:</strong><ul>' + "".join(items) + '</ul></div>'
+            )
+            return (response.replace("\n", "<br>") if isinstance(response, str) else str(response)) + sources_html
+
         return response

@@ -42,14 +42,21 @@ _ROUTE_TAG_RE = re.compile(r"^\s*\[ROUTE:(RAG|CAL)\]\s*", re.IGNORECASE)
 
 # Token capture, three forms
 _MS_TOKEN_PATTERNS = [
+    # Explicit bracket form: [MS_TOKEN: token]
     re.compile(r"\[\s*MS_TOKEN\s*:\s*(?P<token>[^ \]\r\n]+)\s*\]", re.IGNORECASE),
+    # Inline assignment: MS_TOKEN=token
     re.compile(r"\bMS_TOKEN\s*=\s*(?P<token>\S+)", re.IGNORECASE),
+    # Chat command: set ms token <token>
     re.compile(r"^\s*set\s+ms\s+token\s+(?P<token>\S+)\s*$", re.IGNORECASE),
+    # Bearer header style: Bearer <jwt>
+    re.compile(r"\bBearer\s+(?P<token>[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)", re.IGNORECASE),
+    # Raw JWT pasted anywhere in the message (common for MS Graph tokens).
+    re.compile(r"(?P<token>[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"),
 ]
 
 TOKEN_PROMPT_HTML = (
     "I need your Microsoft Graph access token to read your calendar. "
-    "Paste it like `[MS_TOKEN: YOUR_TOKEN]`."
+    "You can paste the raw token string directly (or use `[MS_TOKEN: YOUR_TOKEN]`)."
     "<br><br>"
     "To get a Microsoft Graph access token:"
     "<br>- Go to https://developer.microsoft.com/en-us/graph/graph-explorer"
@@ -117,6 +124,7 @@ calendar_agent: Agent = build_agent()
 class ChatEngine:
     def __init__(self, debug: bool = False):
         self._agent = calendar_agent
+        self.debug = debug
         self._session_id: Optional[str] = None
         self._last_domain: Optional[str] = None  # 'calendar' | 'rag'
         self._pending_calendar_msg: Optional[str] = None  # last calendar ask waiting for token
@@ -206,7 +214,8 @@ class ChatEngine:
 
             # 4) If RAG, call the toolkit directly so we never fall back to general knowledge
             if domain == "rag":
-                html = _rag_toolkit.rag(clean_msg)
+                # pass through the debug flag so rag toolkit prints debug logs when requested
+                html = _rag_toolkit.rag(clean_msg, debug=self.debug)
                 self._last_domain = "rag"
                 yield html if html.lstrip().startswith("<") else html.replace("\n", "<br>")
                 return
