@@ -399,9 +399,16 @@ def summarise_text(
 # Output helpers
 # =======================================================================================
 
-def deterministic_paths(output_dir: Path, base: str) -> Tuple[Path, Path]:
-    summary = output_dir / f"{base}.summary.txt"
-    transcript = output_dir / f"{base}.transcript.txt"
+def deterministic_paths(output_dir: Path, base: str, ts: Optional[str] = None) -> Tuple[Path, Path]:
+    """
+    Return timestamped summary and transcript paths using a consistent timestamp format.
+
+    Filenames use: <base>-YYYYMMDD-HHMM-summary.txt and <base>-YYYYMMDD-HHMM-transcript.txt
+    """
+    if ts is None:
+        ts = datetime.now().strftime("%Y%m%d-%H%M")
+    summary = output_dir / f"{base}-{ts}-summary.txt"
+    transcript = output_dir / f"{base}-{ts}-transcript.txt"
     return summary, transcript
 
 def write_text(path: Path, content: str) -> None:
@@ -612,11 +619,9 @@ def run_offline(args: argparse.Namespace) -> int:
                 outdir = src.parent  # default: next to the source file
             ensure_output_dir(outdir)
 
-            base = src.stem
-            if not multi and args.output_base:
-                base = args.output_base
-
-            summary_path, transcript_path = deterministic_paths(outdir, base)
+            base_core = args.output_base if (not multi and args.output_base) else src.stem
+            ts = datetime.now().strftime("%Y%m%d-%H%M")
+            summary_path, transcript_path = deterministic_paths(outdir, base_core, ts)
 
             log.info("[%d/%d] Transcribing: %s", idx, len(sources), pstr(src))
             transcript, _segments = transcribe_media(src, args.whisper_model)
@@ -669,9 +674,9 @@ def run_live(args: argparse.Namespace) -> int:
     ensure_output_dir(outdir)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M")
-    base = args.output_base or f"{LIVE_BASENAME}-{ts}"
-    summary_path, transcript_path = deterministic_paths(outdir, base)
-    audio_path = outdir / f"{base}.wav"  # persist the audio for future offline runs
+    base_core = args.output_base or LIVE_BASENAME
+    summary_path, transcript_path = deterministic_paths(outdir, base_core, ts)
+    audio_path = outdir / f"{base_core}-{ts}.wav"  # persist the audio for future offline runs
 
     # Option to use an existing transcript file
     if args.use_transcript:
