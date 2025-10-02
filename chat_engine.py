@@ -11,6 +11,7 @@ import os
 import re
 import argparse
 import logging
+import asyncio
 from typing import Generator, Optional
 
 from oci.addons.adk import Agent, AgentClient
@@ -149,6 +150,15 @@ class ChatEngine:
                 return m.group("token").strip()
         return None
 
+    def _agent_run(self, routed_message: str, session_id: Optional[str], max_steps: int = 5):
+        # Ensure an asyncio event loop exists in this worker thread (e.g., AnyIO/Gradio)
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return self._agent.run(routed_message, session_id=session_id, max_steps=max_steps)
+
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
         # Reset
         if user_message.lower().strip() == "reset session":
@@ -179,7 +189,7 @@ class ChatEngine:
                     self._pending_calendar_msg = None
                     yield "Saved Microsoft Graph token. Checking your calendar now…"
                     routed_message = f"{self._prefix_for_domain('calendar')}{msg_to_rerun}"
-                    response = self._agent.run(
+                    response = self._agent_run(
                         routed_message,
                         session_id=self._session_id,
                         max_steps=5,
@@ -222,7 +232,7 @@ class ChatEngine:
 
             # 5) Calendar with token available, run the agent
             routed_message = f"{self._prefix_for_domain(domain)}{clean_msg}"
-            response = self._agent.run(
+            response = self._agent_run(
                 routed_message,
                 session_id=self._session_id,
                 max_steps=5,

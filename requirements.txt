@@ -10,10 +10,10 @@ numpy
 openai-whisper
 oci
 PyPDF2
+pypdf
+requests
 scipy
 sounddevice
-tkinter
-tqdm
-requests
- tzlocal
- backports.zoneinfo; python_version < "3.9"
+tzlocal
+docstring-parser
+backports.zoneinfo; python_version < "3.9"

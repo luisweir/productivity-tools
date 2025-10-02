@@ -37,6 +37,7 @@ class ChatEngine:
         "deepdive": "Detailed content, excluding internal procedures or standards.",
         "research": "Research-focused publications",
         "governance": "Internal tools, corporate guidelines, policies and processes",
+        "meeting": "Call transcript or meeting summary"
     }
 
     def __init__(self, debug: bool = False, index_dir: str = "faiss_index"):
