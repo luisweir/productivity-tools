@@ -12,7 +12,7 @@
 #
 # Modes
 #   --mode offline   Summarise media files. Input via --media-source or a list file
-#   --mode live      Record from mic or use an existing transcript, then summarise
+#   --mode live      Record from mic, then summarise
 #
 # Usage
 #   Offline mode (single file)
@@ -25,8 +25,6 @@
 #   Live mode (record from microphone until Ctrl+C)
 #       python media_champion.py --mode live
 #
-#   Live mode (summarise an existing transcript file)
-#       python media_champion.py --mode live --use-transcript ./my_notes.txt
 #
 # Supported flags:
 #   --mode {offline,live}    Operation mode
@@ -40,7 +38,7 @@
 #   --whisper-model MODEL    Whisper model size (default: base)
 #   --oci-profile NAME       Override OCI profile from LoadConfig or env
 #   --oci-model MODEL_ID     Override serving mode model id for OCI GenAI
-#   --use-transcript FILE    Use an existing transcript file instead of recording (live mode)
+#   --use-transcript FILE    Use an existing transcript file (offline mode only)
 #   --input-device INDEX     Input device index for live recording
 #   --samplerate RATE        Sampling rate for live recording (default: 16000)
 #   --channels N             Number of channels for live recording (default: 1)
@@ -350,6 +348,27 @@ def transcribe_media(input_path: Path, whisper_model: str) -> Tuple[str, Optiona
         audio_path, _ = _prepare_audio_for_whisper(input_path, tmpdir)
         return transcribe_file(audio_path, whisper_model)
 
+def _format_timestamp(secs: float) -> str:
+    h = int(secs // 3600)
+    m = int((secs % 3600) // 60)
+    s = int(secs % 60)
+    ms = int(round((secs - int(secs)) * 1000))
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+def build_timed_transcript(segments: Optional[List[dict]], fallback_text: str) -> str:
+    """
+    Render a transcript with timeline markers. Falls back to plain text if segments are missing.
+    """
+    if not segments:
+        return fallback_text.strip()
+    lines: List[str] = []
+    for seg in segments:
+        start = float(seg.get("start", 0.0))
+        end = float(seg.get("end", 0.0))
+        text = str(seg.get("text", "")).strip()
+        lines.append(f"[{_format_timestamp(start)} - {_format_timestamp(end)}] {text}")
+    return "\n".join(lines).strip()
+
 # =======================================================================================
 # Summarisation
 # =======================================================================================
@@ -554,7 +573,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-base", help="Optional base name override. For single source or live. Batch offline uses per source basename")
 
     # Live options
-    p.add_argument("--use-transcript", help="Use an existing transcript file instead of recording (live mode)")
+    p.add_argument("--use-transcript", help="Use an existing transcript file (offline mode only)")
     p.add_argument("--input-device", type=int, help="Input device index for live recording")
     p.add_argument("--samplerate", type=int, default=16000, help="Sampling rate for live recording (default 16000)")
     p.add_argument("--channels", type=int, default=1, help="Number of channels for live recording (default 1)")
@@ -583,7 +602,7 @@ def post_parse_warnings(args: argparse.Namespace) -> None:
         log.warning("Flag --videos-file is deprecated, use --media-source instead.")
     if getattr(args, "prompt_name", None):
         log.warning("Flag --prompt-name is deprecated, use --prompt instead.")
-    if args.mode == "offline" and args.output_base and not args.media_source:
+    if args.mode == "offline" and args.output_base and not args.media_source and not args.use_transcript:
         log.warning("Offline mode with multiple sources uses each source basename. --output-base is ignored for multiple files.")
     if getattr(args, "diarisation", False):
         log.warning("Diarisation flag accepted for compatibility but is not active in this build.")
@@ -603,6 +622,42 @@ def post_parse_warnings(args: argparse.Namespace) -> None:
 # =======================================================================================
 
 def run_offline(args: argparse.Namespace) -> int:
+    # Support using an existing transcript in offline mode (no ffmpeg/whisper required)
+    if getattr(args, "use_transcript", None):
+        tfile = Path(os.path.expanduser(args.use_transcript)).resolve()
+        if not tfile.is_file():
+            raise FileNotFoundError(f"--use-transcript file not found: {pstr(tfile)}")
+        # Decide output directory: if --output-dir provided use it, otherwise the transcript's folder
+        outdir = Path(args.output_dir).resolve() if args.output_dir else tfile.parent
+        ensure_output_dir(outdir)
+        base_core = args.output_base or tfile.stem
+        ts = datetime.now().strftime("%Y%m%d-%H%M")
+        summary_path, _ = deterministic_paths(outdir, base_core, ts)
+
+        log.info("Using existing transcript (offline): %s", pstr(tfile))
+        transcript = tfile.read_text(encoding="utf-8")
+
+        client = get_oci_client(args.oci_profile)
+        summary = summarise_text(
+            client,
+            transcript,
+            args.prompt,
+            max_tokens=args.max_tokens,
+            include_model_args=not getattr(args, "no_model_args", False),
+            oci_model=args.oci_model,
+            compartment_id=None,
+        )
+        footer = (
+            "\n\n---\n"
+            f"_Generated on {datetime.now().isoformat(timespec='seconds')} "
+            f"with Whisper '{args.whisper_model}', max_tokens={args.max_tokens if not getattr(args, 'no_model_args', False) else 'default'}, prompt='{args.prompt}', "
+            f"model_args_included={not getattr(args, 'no_model_args', False)}, "
+            f"oci_model='{args.oci_model or properties.getModelOcid()}'._\n"
+        )
+        write_text(summary_path, summary + footer)
+        log.info("Wrote summary:   %s", pstr(summary_path))
+        return 0
+
     _require_ffmpeg()
     sources = resolve_sources(args.media_source)
     client = get_oci_client(args.oci_profile)
@@ -624,8 +679,9 @@ def run_offline(args: argparse.Namespace) -> int:
             summary_path, transcript_path = deterministic_paths(outdir, base_core, ts)
 
             log.info("[%d/%d] Transcribing: %s", idx, len(sources), pstr(src))
-            transcript, _segments = transcribe_media(src, args.whisper_model)
-            write_text(transcript_path, transcript)
+            transcript, segments = transcribe_media(src, args.whisper_model)
+            timed = build_timed_transcript(segments, transcript)
+            write_text(transcript_path, timed)
 
             log.info("[%d/%d] Summarising: %s", idx, len(sources), pstr(src))
             summary = summarise_text(
@@ -680,12 +736,7 @@ def run_live(args: argparse.Namespace) -> int:
 
     # Option to use an existing transcript file
     if args.use_transcript:
-        tfile = Path(os.path.expanduser(args.use_transcript)).resolve()
-        if not tfile.is_file():
-            raise FileNotFoundError(f"--use-transcript file not found: {pstr(tfile)}")
-        log.info("Using existing transcript: %s", pstr(tfile))
-        transcript = tfile.read_text(encoding="utf-8")
-        write_text(transcript_path, transcript)
+        raise ValueError("--use-transcript is only supported in offline mode. Run with --mode offline.")
     else:
         if sd is None:
             raise RuntimeError("sounddevice is not installed. Install it to use live mode.")
@@ -698,8 +749,9 @@ def run_live(args: argparse.Namespace) -> int:
         log.info("Saved live audio to: %s", pstr(audio_path))
 
         log.info("Transcribing live recording from saved audio...")
-        transcript, _segments = transcribe_file(audio_path, args.whisper_model)
-        write_text(transcript_path, transcript)
+        transcript, segments = transcribe_file(audio_path, args.whisper_model)
+        timed = build_timed_transcript(segments, transcript)
+        write_text(transcript_path, timed)
         log.info("Wrote transcript: %s", pstr(transcript_path))
 
     log.info("Generating summary with OCI Generative AI...")
